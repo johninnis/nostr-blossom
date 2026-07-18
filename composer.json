@@ -1,0 +1,51 @@
+{
+    "name": "innis/nostr-blossom",
+    "description": "Blossom (BUD) protocol primitives for Nostr: blob addressing, kind-24242 auth, descriptors, and use cases",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "John Innis",
+            "email": "john@innis.xyz",
+            "homepage": "https://www.innis.xyz/"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "innis/nostr-core": "^0.5.3"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "innis/coding-standards": "^0.1",
+        "phpstan/phpstan": "~2.2.2",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpunit/phpunit": "^13.1",
+        "rector/rector": "~2.4.6"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "autoload": {
+        "psr-4": {
+            "Innis\\Nostr\\Blossom\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Innis\\Nostr\\Blossom\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": [
+            "phpunit",
+            "@analyse"
+        ],
+        "test-unit": "phpunit --testsuite=Unit",
+        "test-coverage": "XDEBUG_MODE=coverage phpunit --coverage-html var/tests/coverage/html --coverage-text --coverage-clover var/tests/coverage/clover.xml",
+        "analyse": "phpstan analyse",
+        "fix-style": "php-cs-fixer fix",
+        "check-style": "php-cs-fixer fix --dry-run --diff",
+        "rector": "rector process",
+        "check-rector": "rector process --dry-run"
+    }
+}
