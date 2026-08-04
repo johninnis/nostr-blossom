@@ -29,7 +29,7 @@ storage backend, HTTP runtime, or framework.
 ## Requirements
 
 - PHP 8.4 or higher
-- [`innis/nostr-core`](https://github.com/johninnis/nostr-core) `^0.5.3` (event,
+- [`innis/nostr-core`](https://github.com/johninnis/nostr-core) `^0.6` (event,
   signature, tag, and collection primitives)
 
 ## Installation
