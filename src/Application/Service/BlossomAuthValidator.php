@@ -110,24 +110,30 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
         return $event->getCreatedAt()->isReasonableAt($this->clock->now()) ? null : AuthenticationFailure::unreasonableCreatedAt();
     }
 
+    // Deliberate: a token must state an expiry, every stated expiry must parse, and any one that has passed expires it — tag order cannot change the answer — see ADR-0023
     private function verifyNotExpired(Event $event): ?BlossomFailure
     {
-        $expiration = $event->getTags()->getFirstValueByType(TagType::expiration());
-        if (null === $expiration) {
+        $stated = $event->getTags()->getValuesByType(TagType::expiration());
+        if ([] === $stated) {
             return AuthenticationFailure::missingExpiration();
         }
 
-        $expiry = Timestamp::tryFromDecimalString($expiration);
-        if (null === $expiry) {
+        if (!array_all($stated, static fn (string $value): bool => null !== Timestamp::tryFromDecimalString($value))) {
             return AuthenticationFailure::invalidExpiration();
         }
 
-        return $this->clock->now()->isBefore($expiry) ? null : AuthenticationFailure::expired();
+        return $event->isExpiredAt($this->clock->now()) ? AuthenticationFailure::expired() : null;
     }
 
+    // Deliberate: a token naming more than one verb is refused outright, never resolved by tag order — see ADR-0024
     private function verifyVerb(Event $event, BlossomVerb $verb): ?BlossomFailure
     {
-        $actual = $event->getTags()->getFirstValueByType(TagType::hashtag()) ?? '';
+        $named = $event->getTags()->getHashtags()->toStrings();
+        if (count($named) > 1) {
+            return AuthenticationFailure::ambiguousVerb($named);
+        }
+
+        $actual = $named[0] ?? '';
 
         return $actual === $verb->value ? null : AuthenticationFailure::wrongVerb($verb->value, $actual);
     }

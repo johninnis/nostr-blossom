@@ -75,6 +75,14 @@ final readonly class AuthenticationFailure extends BlossomFailure
         return new self(sprintf('Authorization verb must be "%s", got "%s"', $expected, $actual));
     }
 
+    /**
+     * @param list<string> $named
+     */
+    public static function ambiguousVerb(array $named): self
+    {
+        return new self(sprintf('Authorization event must name exactly one verb, got "%s"', implode('", "', $named)));
+    }
+
     #[Override]
     public function category(): BlossomFailureCategory
     {

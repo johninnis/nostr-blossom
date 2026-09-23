@@ -126,19 +126,70 @@ final class BlossomAuthValidatorTest extends TestCase
 
     public function testRejectsMissingExpirationTag(): void
     {
-        $tags = new TagCollection([new Tag(TagType::hashtag(), ['upload'])]);
-        $event = RumourFactory::createCustomKind(
-            $this->ownerKeyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
-            EventContent::fromString('Blossom auth'),
-            $tags,
-        )->sign($this->ownerKeyPair, $this->signatureService);
-        $header = 'Nostr '.base64_encode((string) json_encode($event->toArray()));
-
-        $result = $this->validator->parse(BlossomVerb::Upload, $header);
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['upload']),
+        ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
         self::assertSame('Authorization event is missing an expiration tag', $result->getMessage());
+    }
+
+    public function testRejectsTokenWhoseSecondExpirationHasPassed(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            new Tag(TagType::expiration(), [(string) (time() - 3600)]),
+        ));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        self::assertSame('Authorization event has expired', $result->getMessage());
+    }
+
+    public function testExpiryVerdictIsIndependentOfExpirationTagOrder(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::expiration(), [(string) (time() - 3600)]),
+            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+        ));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        self::assertSame('Authorization event has expired', $result->getMessage());
+    }
+
+    public function testRejectsTokenNamingMoreThanOneVerb(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::hashtag(), ['delete']),
+            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+        ));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        self::assertSame('Authorization event must name exactly one verb, got "upload", "delete"', $result->getMessage());
+    }
+
+    public function testVerbRefusalIsIndependentOfHashtagTagOrder(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['delete']),
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+        ));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testAcceptsTokenRepeatingOneVerb(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+        ));
+
+        self::assertInstanceOf(Event::class, $result);
     }
 
     public function testRejectsNegativeExpirationWithoutThrowing(): void
@@ -151,19 +202,22 @@ final class BlossomAuthValidatorTest extends TestCase
 
     public function testRejectsNonNumericExpiration(): void
     {
-        $tags = new TagCollection([
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
             new Tag(TagType::hashtag(), ['upload']),
             new Tag(TagType::expiration(), ['soon']),
-        ]);
-        $event = RumourFactory::createCustomKind(
-            $this->ownerKeyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
-            EventContent::fromString('Blossom auth'),
-            $tags,
-        )->sign($this->ownerKeyPair, $this->signatureService);
-        $header = 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        ));
 
-        $result = $this->validator->parse(BlossomVerb::Upload, $header);
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        self::assertSame('Authorization event has an invalid expiration tag', $result->getMessage());
+    }
+
+    public function testRejectsTokenWhoseSecondExpirationIsUnparseable(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            new Tag(TagType::hashtag(), ['upload']),
+            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            new Tag(TagType::expiration(), ['soon']),
+        ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
         self::assertSame('Authorization event has an invalid expiration tag', $result->getMessage());
@@ -299,6 +353,18 @@ final class BlossomAuthValidatorTest extends TestCase
         $result = $this->validator->parse(BlossomVerb::Upload, '');
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    private function headerForTags(Tag ...$tags): string
+    {
+        $event = RumourFactory::createCustomKind(
+            $this->ownerKeyPair->getPublicKey(),
+            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventContent::fromString('Blossom auth'),
+            new TagCollection($tags),
+        )->sign($this->ownerKeyPair, $this->signatureService);
+
+        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
     }
 
     /**
