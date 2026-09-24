@@ -20,7 +20,6 @@ use Innis\Nostr\Blossom\Domain\Failure\AuthorisationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\RemoteFetchFailure;
 use Innis\Nostr\Blossom\Domain\Failure\UnsupportedMimeTypeFailure;
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
-use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\IncomingBlob;
 use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
@@ -162,7 +161,7 @@ final class MirrorBlobTest extends TestCase
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::fromString(BlobHash::TAG), [$hash]);
+            $tags[] = new Tag(TagType::sha256(), [$hash]);
         }
 
         $tags = new TagCollection($tags);

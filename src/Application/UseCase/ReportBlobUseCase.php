@@ -33,7 +33,7 @@ final readonly class ReportBlobUseCase
             return BlobReportFailure::unexpectedKind();
         }
 
-        $hashes = $this->blobHashes($event->getTags()->getValuesByType(TagType::fromString(BlobHash::TAG)));
+        $hashes = $this->blobHashes($event->getTags()->getValuesByType(TagType::sha256()));
         if ([] === $hashes) {
             return BlobReportFailure::missingBlobReference();
         }

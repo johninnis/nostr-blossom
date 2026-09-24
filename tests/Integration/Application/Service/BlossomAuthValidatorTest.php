@@ -388,11 +388,11 @@ final class BlossomAuthValidatorTest extends TestCase
         ];
 
         if (null !== $xHash) {
-            $tags[] = new Tag(TagType::fromString('x'), [$xHash]);
+            $tags[] = new Tag(TagType::sha256(), [$xHash]);
         }
 
         foreach ($servers as $server) {
-            $tags[] = new Tag(TagType::fromString('server'), [$server]);
+            $tags[] = new Tag(TagType::server(), [$server]);
         }
 
         return RumourFactory::createCustomKind(

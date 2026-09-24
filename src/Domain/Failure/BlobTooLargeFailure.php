@@ -14,6 +14,11 @@ final readonly class BlobTooLargeFailure extends BlossomFailure
         return new self(sprintf('File size %d exceeds maximum upload size %d', $size, $maxSize));
     }
 
+    public static function beyondMaximum(int $maxSize): self
+    {
+        return new self(sprintf('Upload exceeds maximum upload size %d', $maxSize));
+    }
+
     #[Override]
     public function category(): BlossomFailureCategory
     {

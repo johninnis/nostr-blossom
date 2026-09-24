@@ -235,6 +235,22 @@ final class UploadBlobTest extends TestCase
         self::assertInstanceOf(BlossomFailure::class, $result);
     }
 
+    public function testReturnsTheSourceFailureWithoutIngesting(): void
+    {
+        $tooLarge = BlobTooLargeFailure::beyondMaximum(1024);
+        $source = $this->createStub(PendingBlobSourceInterface::class);
+        $source->method('stage')->willReturn($tooLarge);
+
+        $store = $this->createMock(BlobStoreInterface::class);
+        $store->expects(self::never())->method('store');
+        $store->expects(self::never())->method('discard');
+
+        $upload = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->config);
+        $result = $upload->execute($this->buildAuthHeader('upload'), $source, null);
+
+        self::assertSame($tooLarge, $result);
+    }
+
     private function useCase(BlobStoreInterface $store, BlobIndexInterface $index, BlobInspectorInterface $inspector, ServerConfig $config): UploadBlobUseCase
     {
         $ingestor = new BlobIngestor(new BlobValidator($inspector, $config->getUploadConstraints(), $this->authValidator), new BlobDescriptorFactory($config->getIdentity(), $this->clock()), $store, $index);
@@ -275,7 +291,7 @@ final class UploadBlobTest extends TestCase
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::fromString('x'), [$hash]);
+            $tags[] = new Tag(TagType::sha256(), [$hash]);
         }
 
         $event = RumourFactory::createCustomKind(

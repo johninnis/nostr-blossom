@@ -22,8 +22,6 @@ use Override;
 
 final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterface
 {
-    private const string SERVER_TAG = 'server';
-
     public function __construct(
         private SignatureServiceInterface $signatureService,
         private ClockInterface $clock,
@@ -97,7 +95,7 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
     // Deliberate: server tags scope the token when present and an untagged token is valid everywhere — see ADR-0018
     private function verifyServerScope(Event $event): ?BlossomFailure
     {
-        $domains = $event->getTags()->getValuesByType(TagType::fromString(self::SERVER_TAG));
+        $domains = $event->getTags()->getValuesByType(TagType::server());
 
         return [] === $domains || array_any($domains, $this->identity->isThisServer(...))
             ? null
@@ -143,6 +141,6 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
      */
     private function namedBlobHashes(Event $event): array
     {
-        return $event->getTags()->getValuesByType(TagType::fromString(BlobHash::TAG));
+        return $event->getTags()->getValuesByType(TagType::sha256());
     }
 }

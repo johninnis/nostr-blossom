@@ -33,6 +33,7 @@ final class BlossomFailureCategoryTest extends TestCase
         yield 'authorisation' => [AuthorisationFailure::notTenant(), BlossomFailureCategory::Authorisation, 403];
         yield 'not found' => [BlobNotFoundFailure::forHash('abc'), BlossomFailureCategory::NotFound, 404];
         yield 'too large' => [BlobTooLargeFailure::forSize(2, 1), BlossomFailureCategory::PayloadTooLarge, 413];
+        yield 'too large beyond the cap' => [BlobTooLargeFailure::beyondMaximum(1), BlossomFailureCategory::PayloadTooLarge, 413];
         yield 'unsupported type' => [UnsupportedMimeTypeFailure::forType(MimeType::fromString('text/plain')), BlossomFailureCategory::UnsupportedMediaType, 415];
         yield 'integrity' => [BlobIntegrityFailure::declaredHashMismatch('a', 'b'), BlossomFailureCategory::MalformedRequest, 400];
         yield 'read' => [BlobReadFailure::unreadable(), BlossomFailureCategory::Internal, 500];

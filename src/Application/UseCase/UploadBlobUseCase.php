@@ -30,8 +30,17 @@ final readonly class UploadBlobUseCase
         }
 
         // Deliberate: policy admission runs before verify(), so an unadmitted caller is rejected without paying secp256k1 — see ADR-0003
-        return $this->policy->allowUpload($auth->getPubkey())
-            ?? $this->authValidator->verify($auth)
-            ?? $this->ingestor->ingest($auth, $source->stage(), $declaredHash);
+        $denied = $this->policy->allowUpload($auth->getPubkey())
+            ?? $this->authValidator->verify($auth);
+        if (null !== $denied) {
+            return $denied;
+        }
+
+        $pending = $source->stage();
+        if ($pending instanceof BlossomFailure) {
+            return $pending;
+        }
+
+        return $this->ingestor->ingest($auth, $pending, $declaredHash);
     }
 }

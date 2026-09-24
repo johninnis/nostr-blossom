@@ -23,7 +23,6 @@ use Innis\Nostr\Blossom\Domain\Failure\BlossomFailure;
 use Innis\Nostr\Blossom\Domain\Failure\MediaOptimisationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\UnsupportedMimeTypeFailure;
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
-use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\IncomingBlob;
 use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
@@ -277,6 +276,25 @@ final class OptimiseMediaTest extends TestCase
         self::assertInstanceOf(BlossomFailure::class, $result);
     }
 
+    public function testReturnsTheSourceFailureWithoutIngesting(): void
+    {
+        $tooLarge = BlobTooLargeFailure::beyondMaximum(1024);
+        $source = $this->createStub(PendingBlobSourceInterface::class);
+        $source->method('stage')->willReturn($tooLarge);
+
+        $optimiser = $this->createMock(MediaOptimiserInterface::class);
+        $optimiser->expects(self::never())->method('optimise');
+
+        $store = $this->createMock(BlobStoreInterface::class);
+        $store->expects(self::never())->method('store');
+        $store->expects(self::never())->method('discard');
+
+        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $optimiser);
+        $result = $optimise->execute($this->authHeader(), $source);
+
+        self::assertSame($tooLarge, $result);
+    }
+
     private function inspector(IncomingBlob $input, IncomingBlob $produced): BlobInspectorInterface
     {
         $inspector = $this->createStub(BlobInspectorInterface::class);
@@ -317,7 +335,7 @@ final class OptimiseMediaTest extends TestCase
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::fromString(BlobHash::TAG), [$hash]);
+            $tags[] = new Tag(TagType::sha256(), [$hash]);
         }
 
         $event = RumourFactory::createCustomKind(

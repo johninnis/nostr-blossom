@@ -9,8 +9,6 @@ use Stringable;
 
 final readonly class BlobHash implements Stringable
 {
-    public const string TAG = 'x';
-
     private function __construct(private string $hex)
     {
     }

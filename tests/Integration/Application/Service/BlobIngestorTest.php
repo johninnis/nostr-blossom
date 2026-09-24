@@ -16,7 +16,6 @@ use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Domain\Failure\AuthorisationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlobReadFailure;
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
-use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\IncomingBlob;
 use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
@@ -205,7 +204,7 @@ final class BlobIngestorTest extends TestCase
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::fromString(BlobHash::TAG), [$hash]);
+            $tags[] = new Tag(TagType::sha256(), [$hash]);
         }
 
         return RumourFactory::createCustomKind(

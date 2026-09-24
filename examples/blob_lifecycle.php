@@ -212,7 +212,7 @@ $authEvent = RumourFactory::createCustomKind(
     new TagCollection([
         new Tag(TagType::hashtag(), ['upload']),
         new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-        new Tag(TagType::fromString(BlobHash::TAG), [$hash->toHex()]),
+        new Tag(TagType::sha256(), [$hash->toHex()]),
     ]),
 )->sign($tenant, $signatureService);
 

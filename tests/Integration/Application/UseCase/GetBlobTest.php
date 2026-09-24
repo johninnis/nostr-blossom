@@ -339,7 +339,7 @@ final class GetBlobTest extends TestCase
         ];
 
         if (null !== $xHash) {
-            $tags[] = new Tag(TagType::fromString('x'), [$xHash]);
+            $tags[] = new Tag(TagType::sha256(), [$xHash]);
         }
 
         return RumourFactory::createCustomKind(

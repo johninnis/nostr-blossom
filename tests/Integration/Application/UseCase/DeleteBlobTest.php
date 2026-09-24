@@ -186,7 +186,7 @@ final class DeleteBlobTest extends TestCase
         $tags = new TagCollection([
             new Tag(TagType::hashtag(), [$verb]),
             new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-            new Tag(TagType::fromString('x'), [$hash]),
+            new Tag(TagType::sha256(), [$hash]),
         ]);
 
         $event = RumourFactory::createCustomKind(
@@ -208,7 +208,7 @@ final class DeleteBlobTest extends TestCase
             new TagCollection([
                 new Tag(TagType::hashtag(), [$verb]),
                 new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-                new Tag(TagType::fromString('x'), [$hash]),
+                new Tag(TagType::sha256(), [$hash]),
             ]),
         )->sign($signer, $this->signatureService);
 

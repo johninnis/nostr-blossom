@@ -31,8 +31,17 @@ final readonly class OptimiseMediaUseCase
         }
 
         // Deliberate: policy admission runs before verify(), so an unadmitted caller is rejected without paying secp256k1 — see ADR-0003
-        return $this->policy->allowMedia($auth->getPubkey())
-            ?? $this->authValidator->verify($auth)
-            ?? $this->ingestor->ingestOptimised($auth, $source->stage(), $this->optimiser);
+        $denied = $this->policy->allowMedia($auth->getPubkey())
+            ?? $this->authValidator->verify($auth);
+        if (null !== $denied) {
+            return $denied;
+        }
+
+        $pending = $source->stage();
+        if ($pending instanceof BlossomFailure) {
+            return $pending;
+        }
+
+        return $this->ingestor->ingestOptimised($auth, $pending, $this->optimiser);
     }
 }

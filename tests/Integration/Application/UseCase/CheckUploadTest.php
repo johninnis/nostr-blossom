@@ -160,7 +160,7 @@ final class CheckUploadTest extends TestCase
             new TagCollection([
                 new Tag(TagType::hashtag(), [$verb]),
                 new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-                new Tag(TagType::fromString('x'), [$hash]),
+                new Tag(TagType::sha256(), [$hash]),
             ]),
         )->sign($this->ownerKeyPair, $this->signatureService);
 
@@ -176,7 +176,7 @@ final class CheckUploadTest extends TestCase
             new TagCollection([
                 new Tag(TagType::hashtag(), [$verb]),
                 new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-                new Tag(TagType::fromString('x'), [$hash]),
+                new Tag(TagType::sha256(), [$hash]),
             ]),
         )->sign($signer, $this->signatureService);
 

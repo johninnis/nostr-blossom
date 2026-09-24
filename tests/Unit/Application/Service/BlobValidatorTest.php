@@ -21,6 +21,7 @@ use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Domain\Entity\Event;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
+use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -162,7 +163,7 @@ final class BlobValidatorTest extends TestCase
             'pubkey' => str_repeat('b', 64),
             'created_at' => 1_000_000,
             'kind' => EventKind::BLOSSOM_BLOB,
-            'tags' => [['t', $verb], [BlobHash::TAG, $hash]],
+            'tags' => [['t', $verb], [TagType::SHA256, $hash]],
             'content' => '',
             'sig' => str_repeat('c', 128),
         ]);

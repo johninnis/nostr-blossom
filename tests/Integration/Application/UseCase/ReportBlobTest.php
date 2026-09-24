@@ -108,7 +108,7 @@ final class ReportBlobTest extends TestCase
     {
         $tags = [new Tag(TagType::fromString('report'), ['other'])];
         foreach ($hashes as $hash) {
-            $tags[] = new Tag(TagType::fromString('x'), [$hash]);
+            $tags[] = new Tag(TagType::sha256(), [$hash]);
         }
 
         return new TagCollection($tags);
