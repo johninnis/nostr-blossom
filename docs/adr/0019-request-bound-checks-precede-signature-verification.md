@@ -1,4 +1,4 @@
-# 0019. Every request-bound check precedes signature verification
+# 19. Every request-bound check precedes signature verification
 
 ## Status
 

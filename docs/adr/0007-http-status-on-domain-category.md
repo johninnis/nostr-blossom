@@ -1,4 +1,4 @@
-# 0007. The HTTP status code lives on the domain failure category
+# 7. The HTTP status code lives on the domain failure category
 
 ## Status
 

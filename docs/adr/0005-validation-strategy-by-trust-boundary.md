@@ -1,4 +1,4 @@
-# 0005. Value-object validation strategy is chosen by trust boundary
+# 5. Value-object validation strategy is chosen by trust boundary
 
 ## Status
 

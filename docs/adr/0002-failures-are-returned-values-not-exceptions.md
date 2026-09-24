@@ -1,4 +1,4 @@
-# 0002. Anticipated failures are returned `BlossomFailure` values, not thrown exceptions
+# 2. Anticipated failures are returned `BlossomFailure` values, not thrown exceptions
 
 ## Status
 

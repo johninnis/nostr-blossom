@@ -1,4 +1,4 @@
-# 0003. Authorisation admits before signature verification
+# 3. Authorisation admits before signature verification
 
 ## Status
 

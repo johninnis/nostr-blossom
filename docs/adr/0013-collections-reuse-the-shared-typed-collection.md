@@ -1,4 +1,4 @@
-# 0013. The package's collections reuse the shared `TypedCollection`, not a bespoke set
+# 13. The package's collections reuse the shared `TypedCollection`, not a bespoke set
 
 ## Status
 

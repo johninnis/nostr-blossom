@@ -1,4 +1,4 @@
-# 0015. A gated get honours the auth event's `x`-tag scoping without requiring it
+# 15. A gated get honours the auth event's `x`-tag scoping without requiring it
 
 ## Status
 

@@ -1,4 +1,4 @@
-# 0020. `ServerConfig` composes three concerns: supplied as one bundle, consumed one slice at a time
+# 20. `ServerConfig` composes three concerns: supplied as one bundle, consumed one slice at a time
 
 ## Status
 

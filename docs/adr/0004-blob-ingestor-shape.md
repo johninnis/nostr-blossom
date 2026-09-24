@@ -1,4 +1,4 @@
-# 0004. The write pipeline: a validator, a descriptor factory, and a coordinator that owns the temp file
+# 4. The write pipeline: a validator, a descriptor factory, and a coordinator that owns the temp file
 
 ## Status
 

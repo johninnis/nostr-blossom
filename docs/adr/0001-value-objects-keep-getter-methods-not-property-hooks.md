@@ -1,4 +1,4 @@
-# 0001. Value objects expose state through `getX()` accessors, not public properties or hooks
+# 1. Value objects expose state through `getX()` accessors, not public properties or hooks
 
 ## Status
 

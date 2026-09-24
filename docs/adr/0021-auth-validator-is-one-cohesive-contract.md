@@ -1,4 +1,4 @@
-# 0021. The kind-24242 auth validator is one cohesive contract, pure binding checks included
+# 21. The kind-24242 auth validator is one cohesive contract, pure binding checks included
 
 ## Status
 

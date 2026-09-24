@@ -1,4 +1,4 @@
-# 0000. Record architecture decisions
+# 0. Record architecture decisions
 
 ## Status
 

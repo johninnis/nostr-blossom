@@ -1,4 +1,4 @@
-# 0006. The upload/delete authorisation event must name the blob (`x` tag required)
+# 6. The upload/delete authorisation event must name the blob (`x` tag required)
 
 ## Status
 

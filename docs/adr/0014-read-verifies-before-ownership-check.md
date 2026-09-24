@@ -1,4 +1,4 @@
-# 0014. A gated read verifies the signature before the authorising policy check
+# 14. A gated read verifies the signature before the authorising policy check
 
 ## Status
 

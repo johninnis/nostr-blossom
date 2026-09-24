@@ -1,4 +1,4 @@
-# 0008. Read access: an enum for the index-free modes, a decorator for tenant-owned
+# 8. Read access: an enum for the index-free modes, a decorator for tenant-owned
 
 ## Status
 

@@ -1,4 +1,4 @@
-# 0018. The auth event's `server`-tag scoping is enforced at parse, matched by domain name
+# 18. The auth event's `server`-tag scoping is enforced at parse, matched by domain name
 
 ## Status
 

@@ -1,4 +1,4 @@
-# 0023. Any stated expiry that has passed expires the token
+# 23. Any stated expiry that has passed expires the token
 
 ## Status
 

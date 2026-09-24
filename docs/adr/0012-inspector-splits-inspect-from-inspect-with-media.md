@@ -1,4 +1,4 @@
-# 0012. The inspector exposes two methods, `inspect` and `inspectWithMedia`, so the pre-optimisation original is hashed without a media decode
+# 12. The inspector exposes two methods, `inspect` and `inspectWithMedia`, so the pre-optimisation original is hashed without a media decode
 
 ## Status
 

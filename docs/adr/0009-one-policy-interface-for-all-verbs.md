@@ -1,4 +1,4 @@
-# 0009. One `BlossomPolicyInterface` covers every verb, not a port per verb
+# 9. One `BlossomPolicyInterface` covers every verb, not a port per verb
 
 ## Status
 

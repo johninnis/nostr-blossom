@@ -1,4 +1,4 @@
-# 0024. A token naming two verbs is refused, not resolved
+# 24. A token naming two verbs is refused, not resolved
 
 ## Status
 

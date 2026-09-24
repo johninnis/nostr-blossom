@@ -1,4 +1,4 @@
-# 0011. Delete is reference-counted: bytes are removed only when no tenant still indexes the hash
+# 11. Delete is reference-counted: bytes are removed only when no tenant still indexes the hash
 
 ## Status
 

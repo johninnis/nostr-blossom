@@ -1,4 +1,4 @@
-# 0010. The report use case verifies the event signature directly, bypassing the auth validator and policy
+# 10. The report use case verifies the event signature directly, bypassing the auth validator and policy
 
 ## Status
 

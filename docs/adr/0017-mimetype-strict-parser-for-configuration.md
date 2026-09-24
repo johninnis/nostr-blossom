@@ -1,4 +1,4 @@
-# 0017. `MimeType` carries a strict parser for configuration strings beside the lenient header parser
+# 17. `MimeType` carries a strict parser for configuration strings beside the lenient header parser
 
 ## Status
 

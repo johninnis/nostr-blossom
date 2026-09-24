@@ -1,4 +1,4 @@
-# 0022. A blob's byte size stays a primitive `int`, not a value object
+# 22. A blob's byte size stays a primitive `int`, not a value object
 
 ## Status
 

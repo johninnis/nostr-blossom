@@ -1,4 +1,4 @@
-# 0016. The auth event's `created_at` is checked for reasonableness, not strictly "in the past"
+# 16. The auth event's `created_at` is checked for reasonableness, not strictly "in the past"
 
 ## Status
 
