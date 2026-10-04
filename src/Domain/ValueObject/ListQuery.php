@@ -16,6 +16,7 @@ final readonly class ListQuery
         private int $limit = self::DEFAULT_LIMIT,
         private ?Timestamp $since = null,
         private ?Timestamp $until = null,
+        private ?BlobHash $cursor = null,
     ) {
         // Deliberate: a query specification holds no result set, so an out-of-range limit is rejected, not clamped — see ADR-0005
         if (!self::isValidLimit($this->limit)) {
@@ -59,7 +60,15 @@ final readonly class ListQuery
             return null;
         }
 
-        return new self($limit ?? self::DEFAULT_LIMIT, $since, $until);
+        $cursor = null;
+        if (isset($params['cursor'])) {
+            $cursor = is_string($params['cursor']) ? BlobHash::tryFromHex($params['cursor']) : null;
+            if (null === $cursor) {
+                return null;
+            }
+        }
+
+        return new self($limit ?? self::DEFAULT_LIMIT, $since, $until, $cursor);
     }
 
     public function getLimit(): int
@@ -75,6 +84,15 @@ final readonly class ListQuery
     public function getUntil(): ?Timestamp
     {
         return $this->until;
+    }
+
+    /**
+     * The hash of the last blob of the previous page, or null for the first page. A page answers the
+     * blobs after it in uploaded-descending order and never includes the cursor's blob (BUD-12).
+     */
+    public function getCursor(): ?BlobHash
+    {
+        return $this->cursor;
     }
 
     private static function isValidLimit(int $limit): bool

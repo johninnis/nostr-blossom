@@ -47,7 +47,7 @@ final readonly class AuthenticationFailure extends BlossomFailure
 
     public static function invalidKind(): self
     {
-        return new self(sprintf('Event kind must be %d', EventKind::BLOSSOM_BLOB));
+        return new self(sprintf('Event kind must be %d', EventKind::BLOSSOM_AUTHORISATION));
     }
 
     public static function unreasonableCreatedAt(): self

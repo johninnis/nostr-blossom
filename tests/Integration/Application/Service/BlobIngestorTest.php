@@ -211,7 +211,7 @@ final class BlobIngestorTest extends TestCase
 
         return Rumour::draft(
             $this->ownerKeyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Blossom auth'),
             new TagCollection($tags),
         )->sign($this->ownerKeyPair, $this->signatureService);

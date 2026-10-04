@@ -263,7 +263,7 @@ final class BlossomAccessGateTest extends TestCase
             'id' => str_repeat('a', 64),
             'pubkey' => str_repeat('b', 64),
             'created_at' => 1_000_000,
-            'kind' => EventKind::BLOSSOM_BLOB,
+            'kind' => EventKind::BLOSSOM_AUTHORISATION,
             'tags' => [['t', 'upload']],
             'content' => '',
             'sig' => str_repeat('c', 128),

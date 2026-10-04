@@ -199,7 +199,7 @@ final class UploadBlobTest extends TestCase
 
         $event = Rumour::draft(
             $otherKeyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Upload'),
             $tags,
         )->sign($otherKeyPair, $this->signatureService);
@@ -321,7 +321,7 @@ final class UploadBlobTest extends TestCase
 
         $event = Rumour::draft(
             $signer->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Blossom auth'),
             new TagCollection($tags),
         )->sign($signer, $this->signatureService);
@@ -333,7 +333,7 @@ final class UploadBlobTest extends TestCase
     {
         $event = Rumour::draft(
             $signer->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Blossom auth'),
             new TagCollection([
                 Tag::fromArray([TagType::HASHTAG, $verb]),

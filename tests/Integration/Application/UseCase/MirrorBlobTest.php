@@ -209,7 +209,7 @@ final class MirrorBlobTest extends TestCase
 
         $event = Rumour::draft(
             $signer->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Mirror blob'),
             $tags,
         )->sign($signer, $this->signatureService);

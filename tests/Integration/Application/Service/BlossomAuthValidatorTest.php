@@ -394,7 +394,7 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $event = Rumour::draft(
             $this->ownerKeyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Blossom auth'),
             new TagCollection($tags),
         )->sign($this->ownerKeyPair, $this->signatureService);
@@ -432,7 +432,7 @@ final class BlossomAuthValidatorTest extends TestCase
 
         return Rumour::draft(
             $keyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Blossom auth'),
             new TagCollection($tags),
             null === $createdAt ? null : Timestamp::fromInt($createdAt),

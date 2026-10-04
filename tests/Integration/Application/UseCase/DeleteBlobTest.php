@@ -223,7 +223,7 @@ final class DeleteBlobTest extends TestCase
 
         $event = Rumour::draft(
             $signer->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Delete blob'),
             $tags,
         )->sign($signer, $this->signatureService);
@@ -235,7 +235,7 @@ final class DeleteBlobTest extends TestCase
     {
         $event = Rumour::draft(
             $signer->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Delete blob'),
             new TagCollection([
                 Tag::fromArray([TagType::HASHTAG, $verb]),

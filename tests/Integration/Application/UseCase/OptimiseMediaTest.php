@@ -382,7 +382,7 @@ final class OptimiseMediaTest extends TestCase
 
         $event = Rumour::draft(
             $signer->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Optimise media'),
             new TagCollection($tags),
         )->sign($signer, $this->signatureService);

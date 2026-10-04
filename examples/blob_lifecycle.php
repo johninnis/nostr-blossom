@@ -209,7 +209,7 @@ $hash = BlobHash::tryFromHex(hash('sha256', $blobBytes)) ?? throw new RuntimeExc
 
 $authEvent = Rumour::draft(
     $tenant->getPublicKey(),
-    EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+    EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
     EventContent::fromString('Upload authorisation'),
     new TagCollection([
         Tag::fromArray([TagType::HASHTAG, 'upload']),

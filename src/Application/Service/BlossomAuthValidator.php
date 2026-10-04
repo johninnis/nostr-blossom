@@ -93,7 +93,7 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
 
     private function verifyKind(Event $event): ?BlossomFailure
     {
-        return $event->getKind()->is(EventKind::BLOSSOM_BLOB) ? null : AuthenticationFailure::invalidKind();
+        return $event->getKind()->is(EventKind::BLOSSOM_AUTHORISATION) ? null : AuthenticationFailure::invalidKind();
     }
 
     // Deliberate: server tags scope the token when present and an untagged token is valid everywhere — see ADR-0018

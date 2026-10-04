@@ -149,7 +149,7 @@ final class ListBlobsTest extends TestCase
 
         return Rumour::draft(
             $keyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('List blobs'),
             $tags,
         )->sign($keyPair, $this->signatureService);

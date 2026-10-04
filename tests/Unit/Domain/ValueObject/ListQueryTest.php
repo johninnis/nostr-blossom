@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Innis\Nostr\Blossom\Tests\Unit\Domain\ValueObject;
 
+use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\ListQuery;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
 use InvalidArgumentException;
@@ -18,6 +19,7 @@ final class ListQueryTest extends TestCase
         self::assertSame(100, $query->getLimit());
         self::assertNull($query->getSince());
         self::assertNull($query->getUntil());
+        self::assertNull($query->getCursor());
     }
 
     public function testCustomLimit(): void
@@ -75,6 +77,29 @@ final class ListQueryTest extends TestCase
         self::assertSame(50, $query->getLimit());
         self::assertSame(1000, $query->getSince()?->toInt());
         self::assertSame(2000, $query->getUntil()?->toInt());
+    }
+
+    public function testCarriesACursor(): void
+    {
+        $cursor = BlobHash::tryFromHex(str_repeat('a', 64));
+        self::assertNotNull($cursor);
+
+        $query = new ListQuery(cursor: $cursor);
+
+        self::assertSame($cursor->toHex(), $query->getCursor()?->toHex());
+    }
+
+    public function testFromQueryStringParsesCursor(): void
+    {
+        $query = ListQuery::tryFromQueryString('cursor='.str_repeat('b', 64));
+
+        self::assertNotNull($query);
+        self::assertSame(str_repeat('b', 64), $query->getCursor()?->toHex());
+    }
+
+    public function testFromQueryStringRejectsMalformedCursor(): void
+    {
+        self::assertNull(ListQuery::tryFromQueryString('cursor=not-a-hash'));
     }
 
     public function testFromQueryStringDefaultsWhenAbsent(): void
