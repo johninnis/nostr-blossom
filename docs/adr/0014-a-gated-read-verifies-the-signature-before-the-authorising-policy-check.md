@@ -18,7 +18,7 @@ The write verbs do not have this problem: their admission is the pure tenant che
 
 ## Decision
 
-On the gated read path, `GetBlobUseCase` verifies the signature **before** consulting the authorising `allowGet(actor, hash)`. The anonymous gate `allowGet(null, hash)` still runs first and still short-circuits a public read without parsing or verifying anything, so the high-volume public case never pays secp256k1. Only a caller that has *already presented an Authorization header* — i.e. one asking for gated access — has its signature verified before the ownership-bearing policy check.
+On the gated read path, `GetBlobUseCase` (through `BlossomAccessGate::authoriseGet`, ADR-0029) verifies the signature **before** consulting the authorising `allowGet(actor, hash)`. The anonymous gate `allowGet(null, hash)` still runs first and still short-circuits a public read without parsing or verifying anything, so the high-volume public case never pays secp256k1. Only a caller that has *already presented an Authorization header* — i.e. one asking for gated access — has its signature verified before the ownership-bearing policy check.
 
 ## Consequences
 

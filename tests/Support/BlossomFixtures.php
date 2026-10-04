@@ -12,6 +12,9 @@ use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Domain\ValueObject\ServerIdentity;
 use Innis\Nostr\Blossom\Domain\ValueObject\TenantPubkeys;
 use Innis\Nostr\Blossom\Domain\ValueObject\UploadConstraints;
+use Innis\Nostr\Core\Domain\Entity\Event;
+use Innis\Nostr\Core\Domain\Service\Base64Codec;
+use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\PublicKey;
 use InvalidArgumentException;
 
@@ -65,5 +68,20 @@ final class BlossomFixtures
     public static function serverIdentity(string $baseUrl): ServerIdentity
     {
         return new ServerIdentity(self::httpUrl($baseUrl));
+    }
+
+    public static function authHeader(Event $event): string
+    {
+        return NostrAuthHeaderCodec::encodeBlossom($event) ?? throw new InvalidArgumentException('the auth event does not fit an Authorization header');
+    }
+
+    public static function authHeaderWithInvalidSignature(Event $event): string
+    {
+        return self::authHeaderCarrying((string) json_encode([...$event->toArray(), 'sig' => str_repeat('0', 128)]));
+    }
+
+    public static function authHeaderCarrying(string $credentials): string
+    {
+        return NostrAuthHeaderCodec::HEADER_PREFIX.Base64Codec::encodeUnpaddedUrl($credentials);
     }
 }

@@ -7,9 +7,11 @@ use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobInspectorInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
 use Innis\Nostr\Blossom\Application\Port\PendingBlobSourceInterface;
+use Innis\Nostr\Blossom\Application\Service\BlobArchive;
 use Innis\Nostr\Blossom\Application\Service\BlobDescriptorFactory;
 use Innis\Nostr\Blossom\Application\Service\BlobIngestor;
 use Innis\Nostr\Blossom\Application\Service\BlobValidator;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\GetBlobUseCase;
@@ -29,12 +31,12 @@ use Innis\Nostr\Blossom\Domain\ValueObject\TenantPubkeys;
 use Innis\Nostr\Blossom\Domain\ValueObject\UploadConstraints;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\PublicKey;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -205,29 +207,31 @@ $config = new ServerConfig(
 
 $hash = BlobHash::tryFromHex(hash('sha256', $blobBytes)) ?? throw new RuntimeException('sha256 is always valid hex');
 
-$authEvent = RumourFactory::createCustomKind(
+$authEvent = Rumour::draft(
     $tenant->getPublicKey(),
     EventKind::fromInt(EventKind::BLOSSOM_BLOB),
     EventContent::fromString('Upload authorisation'),
     new TagCollection([
-        new Tag(TagType::hashtag(), ['upload']),
-        new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-        new Tag(TagType::sha256(), [$hash->toHex()]),
+        Tag::fromArray([TagType::HASHTAG, 'upload']),
+        Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+        Tag::fromArray([TagType::SHA256, $hash->toHex()]),
     ]),
 )->sign($tenant, $signatureService);
 
-$authHeader = NostrAuthHeaderCodec::encode($authEvent);
+$authHeader = NostrAuthHeaderCodec::encodeBlossom($authEvent) ?? throw new RuntimeException('The upload authorisation does not fit an Authorization header');
 
-$validator = new BlossomAuthValidator($signatureService, $clock, $config->getIdentity());
-$policy = new TenantBlossomPolicy($config->getTenantPubkeys());
+$gate = new BlossomAccessGate(
+    new BlossomAuthValidator($signatureService, $clock, $config->getIdentity()),
+    new TenantBlossomPolicy($config->getTenantPubkeys()),
+);
+$archive = new BlobArchive($store, $index);
 $ingestor = new BlobIngestor(
-    new BlobValidator($inspector, $config->getUploadConstraints(), $validator),
+    new BlobValidator($inspector, $config->getUploadConstraints(), $gate),
     new BlobDescriptorFactory($config->getIdentity(), $clock),
-    $store,
-    $index,
+    $archive,
 );
 
-$descriptor = new UploadBlobUseCase($validator, $policy, $ingestor)->execute($authHeader, $source, $hash);
+$descriptor = new UploadBlobUseCase($gate, $ingestor)->execute($authHeader, $source, $hash);
 if ($descriptor instanceof BlossomFailure) {
     fwrite(STDERR, sprintf("upload failed: %s (HTTP %d)\n", $descriptor->getMessage(), $descriptor->category()->httpStatus()));
     exit(1);
@@ -236,7 +240,7 @@ if ($descriptor instanceof BlossomFailure) {
 echo "Uploaded (BUD-02):\n";
 echo json_encode($descriptor, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)."\n\n";
 
-$retrieved = new GetBlobUseCase($store, $index, $validator, $policy)->execute($descriptor->getSha256());
+$retrieved = new GetBlobUseCase($archive, $gate)->execute($descriptor->getSha256());
 if ($retrieved instanceof BlossomFailure) {
     fwrite(STDERR, sprintf("get failed: %s (HTTP %d)\n", $retrieved->getMessage(), $retrieved->category()->httpStatus()));
     exit(1);

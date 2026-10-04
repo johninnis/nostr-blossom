@@ -8,6 +8,8 @@ use Innis\Nostr\Blossom\Application\DTO\RetrievedBlob;
 use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
 use Innis\Nostr\Blossom\Application\Port\BlossomPolicyInterface;
+use Innis\Nostr\Blossom\Application\Service\BlobArchive;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\Service\TenantOwnedBlossomPolicy;
@@ -22,11 +24,11 @@ use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -66,7 +68,7 @@ final class GetBlobTest extends TestCase
         $store = $this->createStub(BlobStoreInterface::class);
         $store->method('retrievePath')->willReturn('/tmp/blobs/'.$sha256);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->publicAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->publicAccess()));
         $result = $getBlob->execute($hash);
 
         self::assertInstanceOf(RetrievedBlob::class, $result);
@@ -92,8 +94,8 @@ final class GetBlobTest extends TestCase
         $store = $this->createStub(BlobStoreInterface::class);
         $store->method('retrievePath')->willReturn('/tmp/blobs/'.$sha256);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->publicAccess());
-        $result = $getBlob->execute($hash, 'Nostr '.base64_encode('not json'));
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->publicAccess()));
+        $result = $getBlob->execute($hash, BlossomFixtures::authHeaderCarrying('not json'));
 
         self::assertInstanceOf(RetrievedBlob::class, $result);
     }
@@ -107,7 +109,7 @@ final class GetBlobTest extends TestCase
 
         $store = $this->createStub(BlobStoreInterface::class);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->publicAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->publicAccess()));
         $result = $getBlob->execute($hash);
 
         self::assertInstanceOf(BlobNotFoundFailure::class, $result);
@@ -131,7 +133,7 @@ final class GetBlobTest extends TestCase
         $store = $this->createStub(BlobStoreInterface::class);
         $store->method('retrievePath')->willReturn(null);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->publicAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->publicAccess()));
         $result = $getBlob->execute($hash);
 
         self::assertInstanceOf(BlobNotFoundFailure::class, $result);
@@ -150,7 +152,7 @@ final class GetBlobTest extends TestCase
         $policy = $this->createStub(BlossomPolicyInterface::class);
         $policy->method('allowGet')->willReturn(AuthorisationFailure::notTenant());
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $policy);
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $policy));
         $result = $getBlob->execute($hash);
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
@@ -165,7 +167,7 @@ final class GetBlobTest extends TestCase
 
         $store = $this->createStub(BlobStoreInterface::class);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
         $result = $getBlob->execute($hash);
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -180,8 +182,8 @@ final class GetBlobTest extends TestCase
 
         $store = $this->createStub(BlobStoreInterface::class);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
-        $result = $getBlob->execute($hash, 'Nostr '.base64_encode('not json'));
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
+        $result = $getBlob->execute($hash, BlossomFixtures::authHeaderCarrying('not json'));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
     }
@@ -204,7 +206,7 @@ final class GetBlobTest extends TestCase
         $store = $this->createStub(BlobStoreInterface::class);
         $store->method('retrievePath')->willReturn('/tmp/blobs/'.$sha256);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
         $result = $getBlob->execute($hash, $this->getAuthHeader($this->tenantKeyPair));
 
         self::assertInstanceOf(RetrievedBlob::class, $result);
@@ -220,7 +222,7 @@ final class GetBlobTest extends TestCase
 
         $store = $this->createStub(BlobStoreInterface::class);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
         $result = $getBlob->execute($hash, $this->getAuthHeader($stranger));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
@@ -244,7 +246,7 @@ final class GetBlobTest extends TestCase
         $store = $this->createStub(BlobStoreInterface::class);
         $store->method('retrievePath')->willReturn('/tmp/blobs/'.$sha256);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
         $result = $getBlob->execute($hash, $this->getAuthHeader($this->tenantKeyPair, $hash->toHex()));
 
         self::assertInstanceOf(RetrievedBlob::class, $result);
@@ -260,7 +262,7 @@ final class GetBlobTest extends TestCase
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('retrievePath');
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
         $result = $getBlob->execute($hash, $this->getAuthHeader($this->tenantKeyPair, hash('sha256', 'a different blob')));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
@@ -273,7 +275,7 @@ final class GetBlobTest extends TestCase
         $index = $this->createStub(BlobIndexInterface::class);
         $store = $this->createStub(BlobStoreInterface::class);
 
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $this->tenantAccess());
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
         $result = $getBlob->execute($hash, $this->invalidlySignedGetHeader($this->tenantKeyPair, hash('sha256', 'a different blob')));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
@@ -291,11 +293,23 @@ final class GetBlobTest extends TestCase
         $store->expects(self::never())->method('retrievePath');
 
         $policy = new TenantOwnedBlossomPolicy($this->tenantAccess(), $index);
-        $getBlob = new GetBlobUseCase($store, $index, $this->authValidator, $policy);
+        $getBlob = new GetBlobUseCase(new BlobArchive($store, $index), new BlossomAccessGate($this->authValidator, $policy));
 
         $result = $getBlob->execute($hash, $this->invalidlySignedGetHeader($this->tenantKeyPair));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testGatedReadGivesTheSameRefusalToAnInvalidSignatureWhetherTheKeyIsTrustedOrUnknown(): void
+    {
+        $hash = BlossomFixtures::blobHash(hash('sha256', 'tenant blob'));
+        $stranger = KeyPair::generate($this->signatureService);
+        $getBlob = new GetBlobUseCase(new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)), new BlossomAccessGate($this->authValidator, $this->tenantAccess()));
+
+        $trusted = $getBlob->execute($hash, $this->invalidlySignedGetHeader($this->tenantKeyPair));
+        $unknown = $getBlob->execute($hash, $this->invalidlySignedGetHeader($stranger));
+
+        self::assertEquals($trusted, $unknown);
     }
 
     private function publicAccess(): BlossomPolicyInterface
@@ -320,29 +334,26 @@ final class GetBlobTest extends TestCase
 
     private function getAuthHeader(KeyPair $keyPair, ?string $xHash = null): string
     {
-        return 'Nostr '.base64_encode((string) json_encode($this->getAuthEvent($keyPair, $xHash)->toArray()));
+        return BlossomFixtures::authHeader($this->getAuthEvent($keyPair, $xHash));
     }
 
     private function invalidlySignedGetHeader(KeyPair $keyPair, ?string $xHash = null): string
     {
-        $data = $this->getAuthEvent($keyPair, $xHash)->toArray();
-        $data['sig'] = str_repeat('0', 128);
-
-        return 'Nostr '.base64_encode((string) json_encode($data));
+        return BlossomFixtures::authHeaderWithInvalidSignature($this->getAuthEvent($keyPair, $xHash));
     }
 
     private function getAuthEvent(KeyPair $keyPair, ?string $xHash = null): Event
     {
         $tags = [
-            new Tag(TagType::hashtag(), ['get']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'get']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ];
 
         if (null !== $xHash) {
-            $tags[] = new Tag(TagType::sha256(), [$xHash]);
+            $tags[] = Tag::fromArray([TagType::SHA256, $xHash]);
         }
 
-        return RumourFactory::createCustomKind(
+        return Rumour::draft(
             $keyPair->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Blossom auth'),

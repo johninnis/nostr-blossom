@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Innis\Nostr\Blossom\Tests\Integration\Application\UseCase;
 
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\CheckUploadUseCase;
@@ -16,11 +17,11 @@ use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -76,13 +77,36 @@ final class CheckUploadTest extends TestCase
         self::assertInstanceOf(AuthenticationFailure::class, $result);
     }
 
-    public function testAdmissionRejectsUnauthorisedUploaderBeforeSignatureIsVerified(): void
+    public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
     {
         $stranger = KeyPair::generate($this->signatureService);
         $hash = hash('sha256', 'declared content');
-        $authHeader = $this->headerWithInvalidSignature($stranger, 'upload', $hash);
+        $declared = new DeclaredBlob(BlossomFixtures::blobHash($hash), 512, BlossomFixtures::mimeType('image/png'));
 
-        $result = $this->useCase()->execute($authHeader, new DeclaredBlob(BlossomFixtures::blobHash($hash), 512, BlossomFixtures::mimeType('image/png')));
+        $trusted = $this->useCase()->execute($this->headerWithInvalidSignature($this->ownerKeyPair, 'upload', $hash), $declared);
+        $unknown = $this->useCase()->execute($this->headerWithInvalidSignature($stranger, 'upload', $hash), $declared);
+
+        self::assertEquals($trusted, $unknown);
+    }
+
+    public function testInvalidSignatureFromAnUnknownKeyIsRefusedAsUnauthenticated(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'declared content');
+        $declared = new DeclaredBlob(BlossomFixtures::blobHash($hash), 512, BlossomFixtures::mimeType('image/png'));
+
+        $result = $this->useCase()->execute($this->headerWithInvalidSignature($stranger, 'upload', $hash), $declared);
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testValidlySignedUnknownKeyIsRefusedByPolicy(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'declared content');
+        $declared = new DeclaredBlob(BlossomFixtures::blobHash($hash), 512, BlossomFixtures::mimeType('image/png'));
+
+        $result = $this->useCase()->execute($this->buildAuthHeader('upload', $hash, $stranger), $declared);
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
     }
@@ -140,7 +164,7 @@ final class CheckUploadTest extends TestCase
 
     private function useCase(): CheckUploadUseCase
     {
-        return new CheckUploadUseCase($this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()), $this->config->getUploadConstraints());
+        return new CheckUploadUseCase(new BlossomAccessGate($this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys())), $this->config->getUploadConstraints());
     }
 
     private function clock(): ClockInterface
@@ -151,38 +175,37 @@ final class CheckUploadTest extends TestCase
         return $clock;
     }
 
-    private function buildAuthHeader(string $verb, string $hash): string
+    private function buildAuthHeader(string $verb, string $hash, ?KeyPair $signer = null): string
     {
-        $event = RumourFactory::createCustomKind(
-            $this->ownerKeyPair->getPublicKey(),
-            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
-            EventContent::fromString('Blossom auth'),
-            new TagCollection([
-                new Tag(TagType::hashtag(), [$verb]),
-                new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-                new Tag(TagType::sha256(), [$hash]),
-            ]),
-        )->sign($this->ownerKeyPair, $this->signatureService);
+        $signer ??= $this->ownerKeyPair;
 
-        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
-    }
-
-    private function headerWithInvalidSignature(KeyPair $signer, string $verb, string $hash): string
-    {
-        $event = RumourFactory::createCustomKind(
+        $event = Rumour::draft(
             $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Blossom auth'),
             new TagCollection([
-                new Tag(TagType::hashtag(), [$verb]),
-                new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-                new Tag(TagType::sha256(), [$hash]),
+                Tag::fromArray([TagType::HASHTAG, $verb]),
+                Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+                Tag::fromArray([TagType::SHA256, $hash]),
             ]),
         )->sign($signer, $this->signatureService);
 
-        $tampered = $event->toArray();
-        $tampered['sig'] = str_repeat('0', 128);
+        return BlossomFixtures::authHeader($event);
+    }
 
-        return 'Nostr '.base64_encode((string) json_encode($tampered));
+    private function headerWithInvalidSignature(KeyPair $signer, string $verb, string $hash): string
+    {
+        $event = Rumour::draft(
+            $signer->getPublicKey(),
+            EventKind::fromInt(EventKind::BLOSSOM_BLOB),
+            EventContent::fromString('Blossom auth'),
+            new TagCollection([
+                Tag::fromArray([TagType::HASHTAG, $verb]),
+                Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+                Tag::fromArray([TagType::SHA256, $hash]),
+            ]),
+        )->sign($signer, $this->signatureService);
+
+        return BlossomFixtures::authHeaderWithInvalidSignature($event);
     }
 }

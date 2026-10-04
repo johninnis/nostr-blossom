@@ -12,11 +12,12 @@ use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
+use Innis\Nostr\Core\Domain\Service\Base64Codec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -28,12 +29,14 @@ final class BlossomAuthValidatorTest extends TestCase
     private KeyPair $ownerKeyPair;
     private SignatureServiceInterface $signatureService;
     private BlossomAuthValidator $validator;
+    private int $now;
 
     protected function setUp(): void
     {
         $this->signatureService = Secp256k1Signer::create();
+        $this->now = time();
         $clock = $this->createStub(ClockInterface::class);
-        $clock->method('now')->willReturn(Timestamp::now());
+        $clock->method('now')->willReturn(Timestamp::fromInt($this->now));
         $this->ownerKeyPair = KeyPair::generate($this->signatureService);
         $config = BlossomFixtures::serverConfig(
             tenantPubkeys: [$this->ownerKeyPair->getPublicKey()],
@@ -60,9 +63,31 @@ final class BlossomAuthValidatorTest extends TestCase
         self::assertSame('Authorization header is not valid base64', $result->getMessage());
     }
 
+    public function testAcceptsTheBud11UnpaddedBase64UrlHeader(): void
+    {
+        $credentials = Base64Codec::encodeUnpaddedUrl($this->signedAuthEvent($this->ownerKeyPair, 'upload')->toJson());
+
+        self::assertInstanceOf(Event::class, $this->validator->parse(BlossomVerb::Upload, 'Nostr '.$credentials));
+    }
+
+    public function testAcceptsTheLegacyPaddedBase64Header(): void
+    {
+        $credentials = base64_encode($this->signedAuthEvent($this->ownerKeyPair, 'upload')->toJson());
+
+        self::assertInstanceOf(Event::class, $this->validator->parse(BlossomVerb::Upload, 'Nostr '.$credentials));
+    }
+
+    public function testRejectsPaddedBase64UrlAsInvalidEncoding(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, 'Nostr -_8=');
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        self::assertSame('Authorization header is not valid base64', $result->getMessage());
+    }
+
     public function testRejectsInvalidJson(): void
     {
-        $result = $this->validator->parse(BlossomVerb::Upload, 'Nostr '.base64_encode('not json'));
+        $result = $this->validator->parse(BlossomVerb::Upload, BlossomFixtures::authHeaderCarrying('not json'));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
         self::assertSame('Authorization header is not valid JSON', $result->getMessage());
@@ -78,9 +103,7 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testParseAcceptsEnvelopeBeforeSignatureIsChecked(): void
     {
         $event = $this->signedAuthEvent($this->ownerKeyPair, 'upload');
-        $data = $event->toArray();
-        $data['sig'] = str_repeat('0', 128);
-        $header = 'Nostr '.base64_encode((string) json_encode($data));
+        $header = BlossomFixtures::authHeaderWithInvalidSignature($event);
 
         self::assertInstanceOf(Event::class, $this->validator->parse(BlossomVerb::Upload, $header));
     }
@@ -88,9 +111,7 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testVerifyRejectsTamperedSignature(): void
     {
         $event = $this->signedAuthEvent($this->ownerKeyPair, 'upload');
-        $data = $event->toArray();
-        $data['sig'] = str_repeat('0', 128);
-        $header = 'Nostr '.base64_encode((string) json_encode($data));
+        $header = BlossomFixtures::authHeaderWithInvalidSignature($event);
 
         $parsed = $this->validator->parse(BlossomVerb::Upload, $header);
         self::assertInstanceOf(Event::class, $parsed);
@@ -107,9 +128,9 @@ final class BlossomAuthValidatorTest extends TestCase
 
     public function testRejectsWrongKind(): void
     {
-        $event = RumourFactory::createTextNote($this->ownerKeyPair->getPublicKey(), 'hello')
+        $event = Rumour::draft($this->ownerKeyPair->getPublicKey(), EventKind::fromInt(EventKind::TEXT_NOTE), EventContent::fromString('hello'))
             ->sign($this->ownerKeyPair, $this->signatureService);
-        $header = 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        $header = BlossomFixtures::authHeader($event);
 
         $result = $this->validator->parse(BlossomVerb::Upload, $header);
 
@@ -127,7 +148,7 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testRejectsMissingExpirationTag(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -137,9 +158,9 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testRejectsTokenWhoseSecondExpirationHasPassed(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-            new Tag(TagType::expiration(), [(string) (time() - 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() - 3600)]),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -149,9 +170,9 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testExpiryVerdictIsIndependentOfExpirationTagOrder(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), [(string) (time() - 3600)]),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() - 3600)]),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -161,9 +182,9 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testRejectsTokenNamingMoreThanOneVerb(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::hashtag(), ['delete']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::HASHTAG, 'delete']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -173,9 +194,9 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testVerbRefusalIsIndependentOfHashtagTagOrder(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['delete']),
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'delete']),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -184,9 +205,9 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testAcceptsTokenRepeatingOneVerb(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ));
 
         self::assertInstanceOf(Event::class, $result);
@@ -203,8 +224,8 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testRejectsNonNumericExpiration(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), ['soon']),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, 'soon']),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -214,9 +235,9 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testRejectsTokenWhoseSecondExpirationIsUnparseable(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-            new Tag(TagType::expiration(), ['soon']),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+            Tag::fromArray([TagType::EXPIRATION, 'soon']),
         ));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -225,7 +246,7 @@ final class BlossomAuthValidatorTest extends TestCase
 
     public function testRejectsCreatedAtTooFarInTheFuture(): void
     {
-        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: time() + 7200));
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now + 7200));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
         self::assertSame('Authorization event created_at is too far from the current time', $result->getMessage());
@@ -233,15 +254,29 @@ final class BlossomAuthValidatorTest extends TestCase
 
     public function testRejectsCreatedAtTooFarInThePast(): void
     {
-        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: time() - (11 * 365 * 24 * 3600)));
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now - (11 * 365 * 24 * 3600)));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
         self::assertSame('Authorization event created_at is too far from the current time', $result->getMessage());
     }
 
-    public function testToleratesCreatedAtSlightlyInTheFutureForClockSkew(): void
+    public function testToleratesCreatedAtUpToSixtySecondsAheadOfTheServerClock(): void
     {
-        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: time() + 30));
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now + 60));
+
+        self::assertInstanceOf(Event::class, $result);
+    }
+
+    public function testRejectsCreatedAtMoreThanSixtySecondsAheadOfTheServerClock(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now + 61));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testAcceptsCreatedAtExactlyAtTheServerClock(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now));
 
         self::assertInstanceOf(Event::class, $result);
     }
@@ -257,7 +292,7 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $other = KeyPair::generate($this->signatureService);
         $event = $this->signedAuthEvent($other, 'upload');
-        $header = 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        $header = BlossomFixtures::authHeader($event);
 
         $result = $this->validator->parse(BlossomVerb::Upload, $header);
 
@@ -357,14 +392,14 @@ final class BlossomAuthValidatorTest extends TestCase
 
     private function headerForTags(Tag ...$tags): string
     {
-        $event = RumourFactory::createCustomKind(
+        $event = Rumour::draft(
             $this->ownerKeyPair->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Blossom auth'),
             new TagCollection($tags),
         )->sign($this->ownerKeyPair, $this->signatureService);
 
-        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        return BlossomFixtures::authHeader($event);
     }
 
     /**
@@ -374,7 +409,7 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $event = $this->signedAuthEvent($this->ownerKeyPair, $verb, $expiration, $xHash, $createdAt, $servers);
 
-        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        return BlossomFixtures::authHeader($event);
     }
 
     /**
@@ -383,19 +418,19 @@ final class BlossomAuthValidatorTest extends TestCase
     private function signedAuthEvent(KeyPair $keyPair, string $verb, ?int $expiration = null, ?string $xHash = null, ?int $createdAt = null, array $servers = []): Event
     {
         $tags = [
-            new Tag(TagType::hashtag(), [$verb]),
-            new Tag(TagType::expiration(), [(string) ($expiration ?? time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, $verb]),
+            Tag::fromArray([TagType::EXPIRATION, (string) ($expiration ?? time() + 3600)]),
         ];
 
         if (null !== $xHash) {
-            $tags[] = new Tag(TagType::sha256(), [$xHash]);
+            $tags[] = Tag::fromArray([TagType::SHA256, $xHash]);
         }
 
         foreach ($servers as $server) {
-            $tags[] = new Tag(TagType::server(), [$server]);
+            $tags[] = Tag::fromArray([TagType::SERVER, $server]);
         }
 
-        return RumourFactory::createCustomKind(
+        return Rumour::draft(
             $keyPair->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Blossom auth'),

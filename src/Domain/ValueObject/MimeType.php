@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace Innis\Nostr\Blossom\Domain\ValueObject;
 
+use Innis\Nostr\Core\Domain\Service\MimeTypeParser;
+use Innis\Nostr\Core\Domain\ValueObject\IdentityKeyedInterface;
 use Override;
 use Stringable;
 
-final readonly class MimeType implements Stringable
+final readonly class MimeType implements IdentityKeyedInterface, Stringable
 {
     public const string GENERIC = 'application/octet-stream';
-
-    private const string ESSENCE_PATTERN = '~\A[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*\z~';
 
     private const array EXTENSIONS = [
         'image/png' => '.png',
@@ -45,9 +45,9 @@ final readonly class MimeType implements Stringable
     // Deliberate: the strict parser for untrusted configuration strings, which must reject rather than degrade — see ADR-0017
     public static function tryFromString(string $value): ?self
     {
-        $essence = strtolower(trim($value));
+        $essence = MimeTypeParser::tryParse(trim($value));
 
-        return 1 === preg_match(self::ESSENCE_PATTERN, $essence) ? new self($essence) : null;
+        return null === $essence ? null : new self($essence);
     }
 
     public static function generic(): self
@@ -68,6 +68,12 @@ final readonly class MimeType implements Stringable
     public function equals(self $other): bool
     {
         return $this->value === $other->value;
+    }
+
+    #[Override]
+    public function identityKey(): string
+    {
+        return $this->value;
     }
 
     #[Override]

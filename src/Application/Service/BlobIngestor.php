@@ -6,8 +6,6 @@ namespace Innis\Nostr\Blossom\Application\Service;
 
 use Innis\Nostr\Blossom\Application\DTO\PendingBlob;
 use Innis\Nostr\Blossom\Application\DTO\StorableBlob;
-use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
-use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
 use Innis\Nostr\Blossom\Application\Port\MediaOptimiserInterface;
 use Innis\Nostr\Blossom\Domain\Failure\BlossomFailure;
 use Innis\Nostr\Blossom\Domain\Failure\MediaOptimisationFailure;
@@ -23,8 +21,7 @@ final readonly class BlobIngestor
     public function __construct(
         private BlobValidator $validator,
         private BlobDescriptorFactory $descriptorFactory,
-        private BlobStoreInterface $store,
-        private BlobIndexInterface $index,
+        private BlobArchive $archive,
     ) {
     }
 
@@ -79,7 +76,7 @@ final readonly class BlobIngestor
         }
 
         if ($produced->getPath() !== $original->getPath()) {
-            $this->store->discard($original->getPath());
+            $this->archive->discard($original->getPath());
         }
 
         return $produced;
@@ -87,17 +84,15 @@ final readonly class BlobIngestor
 
     private function persist(PublicKey $tenant, StorableBlob $storable): BlobDescriptor
     {
-        $this->store->store($storable->getPath(), $storable->getHash());
-
         $descriptor = $this->descriptorFactory->create($storable);
-        $this->index->save($tenant, $descriptor);
+        $this->archive->store($tenant, $storable->getPath(), $descriptor);
 
         return $descriptor;
     }
 
     private function reject(string $path, BlossomFailure $error): BlossomFailure
     {
-        $this->store->discard($path);
+        $this->archive->discard($path);
 
         return $error;
     }

@@ -9,9 +9,11 @@ use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobInspectorInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
 use Innis\Nostr\Blossom\Application\Port\RemoteBlobFetcherInterface;
+use Innis\Nostr\Blossom\Application\Service\BlobArchive;
 use Innis\Nostr\Blossom\Application\Service\BlobDescriptorFactory;
 use Innis\Nostr\Blossom\Application\Service\BlobIngestor;
 use Innis\Nostr\Blossom\Application\Service\BlobValidator;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\MirrorBlobUseCase;
@@ -25,11 +27,13 @@ use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
+use Innis\Nostr\Core\Domain\Entity\Event;
+use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -122,11 +126,46 @@ final class MirrorBlobTest extends TestCase
         self::assertInstanceOf(AuthorisationFailure::class, $result);
     }
 
+    public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'mirrored');
+        $mirror = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'));
+
+        $trusted = $mirror->execute($this->withInvalidSignature($this->authHeader($hash)), BlossomFixtures::httpUrl('https://remote.test/blob'));
+        $unknown = $mirror->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), BlossomFixtures::httpUrl('https://remote.test/blob'));
+
+        self::assertEquals($trusted, $unknown);
+    }
+
+    public function testInvalidSignatureFromAnUnknownKeyIsRefusedAsUnauthenticated(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'mirrored');
+        $mirror = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'));
+
+        $result = $mirror->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), BlossomFixtures::httpUrl('https://remote.test/blob'));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testValidlySignedUnknownKeyIsRefusedByPolicy(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'mirrored');
+        $mirror = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'));
+
+        $result = $mirror->execute($this->authHeader($hash, $stranger), BlossomFixtures::httpUrl('https://remote.test/blob'));
+
+        self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
     private function useCase(BlobStoreInterface $store, BlobIndexInterface $index, BlobInspectorInterface $inspector, RemoteBlobFetcherInterface $fetcher): MirrorBlobUseCase
     {
-        $ingestor = new BlobIngestor(new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->authValidator), new BlobDescriptorFactory($this->config->getIdentity(), $this->clock()), $store, $index);
+        $gate = new BlossomAccessGate($this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()));
+        $ingestor = new BlobIngestor(new BlobValidator($inspector, $this->config->getUploadConstraints(), $gate), new BlobDescriptorFactory($this->config->getIdentity(), $this->clock()), new BlobArchive($store, $index));
 
-        return new MirrorBlobUseCase($fetcher, $this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()), $ingestor);
+        return new MirrorBlobUseCase($fetcher, $gate, $ingestor);
     }
 
     private function inspector(string $hash, int $size): BlobInspectorInterface
@@ -153,26 +192,36 @@ final class MirrorBlobTest extends TestCase
         return $clock;
     }
 
-    private function authHeader(?string $hash = null): string
+    private function authHeader(?string $hash = null, ?KeyPair $signer = null): string
     {
+        $signer ??= $this->ownerKeyPair;
+
         $tags = [
-            new Tag(TagType::hashtag(), ['upload']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::sha256(), [$hash]);
+            $tags[] = Tag::fromArray([TagType::SHA256, $hash]);
         }
 
         $tags = new TagCollection($tags);
 
-        $event = RumourFactory::createCustomKind(
-            $this->ownerKeyPair->getPublicKey(),
+        $event = Rumour::draft(
+            $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Mirror blob'),
             $tags,
-        )->sign($this->ownerKeyPair, $this->signatureService);
+        )->sign($signer, $this->signatureService);
 
-        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        return BlossomFixtures::authHeader($event);
+    }
+
+    private function withInvalidSignature(string $header): string
+    {
+        $event = NostrAuthHeaderCodec::decodeBlossom($header);
+        self::assertInstanceOf(Event::class, $event);
+
+        return BlossomFixtures::authHeaderWithInvalidSignature($event);
     }
 }

@@ -7,7 +7,9 @@ namespace Innis\Nostr\Blossom\Tests\Unit\Application\Service;
 use Innis\Nostr\Blossom\Application\DTO\PendingBlob;
 use Innis\Nostr\Blossom\Application\DTO\StorableBlob;
 use Innis\Nostr\Blossom\Application\Port\BlobInspectorInterface;
+use Innis\Nostr\Blossom\Application\Port\BlossomPolicyInterface;
 use Innis\Nostr\Blossom\Application\Service\BlobValidator;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidatorInterface;
 use Innis\Nostr\Blossom\Domain\Failure\AuthorisationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlobIntegrityFailure;
@@ -111,7 +113,7 @@ final class BlobValidatorTest extends TestCase
     {
         $inspector = $this->createStub(BlobInspectorInterface::class);
         $inspector->method('inspectWithMedia')->willThrowException(new RuntimeException('cannot read'));
-        $validator = new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->authValidator(null));
+        $validator = new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->gate(null));
 
         $result = $validator->validateStorable(
             $this->authEvent('upload', hash('sha256', 'x')),
@@ -129,7 +131,7 @@ final class BlobValidatorTest extends TestCase
 
         $inspector = $this->createStub(BlobInspectorInterface::class);
         $inspector->method('inspect')->willReturn($blob);
-        $validator = new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->authValidator(null));
+        $validator = new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->gate(null));
 
         $result = $validator->admitOriginal(
             $this->authEvent('media', $originalHash),
@@ -145,15 +147,15 @@ final class BlobValidatorTest extends TestCase
         $inspector = $this->createStub(BlobInspectorInterface::class);
         $inspector->method('inspectWithMedia')->willReturn($inspected);
 
-        return new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->authValidator($binding));
+        return new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->gate($binding));
     }
 
-    private function authValidator(?BlossomFailure $binding): BlossomAuthValidatorInterface
+    private function gate(?BlossomFailure $binding): BlossomAccessGate
     {
-        $stub = $this->createStub(BlossomAuthValidatorInterface::class);
-        $stub->method('requireAuthorisedBlob')->willReturn($binding);
+        $authValidator = $this->createStub(BlossomAuthValidatorInterface::class);
+        $authValidator->method('requireAuthorisedBlob')->willReturn($binding);
 
-        return $stub;
+        return new BlossomAccessGate($authValidator, $this->createStub(BlossomPolicyInterface::class));
     }
 
     private function authEvent(string $verb, string $hash): Event

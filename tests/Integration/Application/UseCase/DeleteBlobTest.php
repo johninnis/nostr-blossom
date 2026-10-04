@@ -6,7 +6,8 @@ namespace Innis\Nostr\Blossom\Tests\Integration\Application\UseCase;
 
 use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
-use Innis\Nostr\Blossom\Application\Service\BlobRemover;
+use Innis\Nostr\Blossom\Application\Service\BlobArchive;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\DeleteBlobUseCase;
@@ -18,11 +19,11 @@ use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -63,7 +64,7 @@ final class DeleteBlobTest extends TestCase
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('delete');
 
-        $deleteBlob = new DeleteBlobUseCase(new BlobRemover($store, $index), $this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()));
+        $deleteBlob = new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
 
         self::assertNull($result);
@@ -81,7 +82,7 @@ final class DeleteBlobTest extends TestCase
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        $deleteBlob = new DeleteBlobUseCase(new BlobRemover($store, $index), $this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()));
+        $deleteBlob = new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
 
         self::assertNull($result);
@@ -98,24 +99,51 @@ final class DeleteBlobTest extends TestCase
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        $deleteBlob = new DeleteBlobUseCase(new BlobRemover($store, $index), $this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()));
+        $deleteBlob = new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
 
         self::assertInstanceOf(BlobNotFoundFailure::class, $result);
     }
 
-    public function testAdmissionRejectsUnauthorisedDeleterBeforeSignatureIsVerified(): void
+    public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
     {
         $stranger = KeyPair::generate($this->signatureService);
         $sha256 = hash('sha256', 'to delete');
-        $authHeader = $this->headerWithInvalidSignature($stranger, 'delete', $sha256);
-
         $deleteBlob = new DeleteBlobUseCase(
-            new BlobRemover($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->authValidator,
-            new TenantBlossomPolicy($this->config->getTenantPubkeys()),
+            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
+            $this->gate(),
         );
-        $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
+
+        $trusted = $deleteBlob->execute($this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
+        $unknown = $deleteBlob->execute($this->headerWithInvalidSignature($stranger, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
+
+        self::assertEquals($trusted, $unknown);
+    }
+
+    public function testInvalidSignatureFromAnUnknownKeyIsRefusedAsUnauthenticated(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $sha256 = hash('sha256', 'to delete');
+        $deleteBlob = new DeleteBlobUseCase(
+            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
+            $this->gate(),
+        );
+
+        $result = $deleteBlob->execute($this->headerWithInvalidSignature($stranger, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testValidlySignedUnknownKeyIsRefusedByPolicy(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $sha256 = hash('sha256', 'to delete');
+        $deleteBlob = new DeleteBlobUseCase(
+            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
+            $this->gate(),
+        );
+
+        $result = $deleteBlob->execute($this->buildAuthHeader('delete', $sha256, $stranger), BlossomFixtures::blobHash($sha256));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
     }
@@ -129,9 +157,8 @@ final class DeleteBlobTest extends TestCase
         $index->expects(self::never())->method('deleteForTenant');
 
         $deleteBlob = new DeleteBlobUseCase(
-            new BlobRemover($this->createStub(BlobStoreInterface::class), $index),
-            $this->authValidator,
-            new TenantBlossomPolicy($this->config->getTenantPubkeys()),
+            new BlobArchive($this->createStub(BlobStoreInterface::class), $index),
+            $this->gate(),
         );
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
 
@@ -145,9 +172,8 @@ final class DeleteBlobTest extends TestCase
         $authHeader = $this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $namedHash);
 
         $deleteBlob = new DeleteBlobUseCase(
-            new BlobRemover($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->authValidator,
-            new TenantBlossomPolicy($this->config->getTenantPubkeys()),
+            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
+            $this->gate(),
         );
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($deletedHash));
 
@@ -161,13 +187,17 @@ final class DeleteBlobTest extends TestCase
         $authHeader = $this->buildAuthHeader('delete', $namedHash);
 
         $deleteBlob = new DeleteBlobUseCase(
-            new BlobRemover($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->authValidator,
-            new TenantBlossomPolicy($this->config->getTenantPubkeys()),
+            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
+            $this->gate(),
         );
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($deletedHash));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
+    private function gate(): BlossomAccessGate
+    {
+        return new BlossomAccessGate($this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()));
     }
 
     private function descriptor(string $sha256): BlobDescriptor
@@ -181,40 +211,39 @@ final class DeleteBlobTest extends TestCase
         );
     }
 
-    private function buildAuthHeader(string $verb, string $hash): string
+    private function buildAuthHeader(string $verb, string $hash, ?KeyPair $signer = null): string
     {
+        $signer ??= $this->ownerKeyPair;
+
         $tags = new TagCollection([
-            new Tag(TagType::hashtag(), [$verb]),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-            new Tag(TagType::sha256(), [$hash]),
+            Tag::fromArray([TagType::HASHTAG, $verb]),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+            Tag::fromArray([TagType::SHA256, $hash]),
         ]);
 
-        $event = RumourFactory::createCustomKind(
-            $this->ownerKeyPair->getPublicKey(),
+        $event = Rumour::draft(
+            $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Delete blob'),
             $tags,
-        )->sign($this->ownerKeyPair, $this->signatureService);
+        )->sign($signer, $this->signatureService);
 
-        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        return BlossomFixtures::authHeader($event);
     }
 
     private function headerWithInvalidSignature(KeyPair $signer, string $verb, string $hash): string
     {
-        $event = RumourFactory::createCustomKind(
+        $event = Rumour::draft(
             $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Delete blob'),
             new TagCollection([
-                new Tag(TagType::hashtag(), [$verb]),
-                new Tag(TagType::expiration(), [(string) (time() + 3600)]),
-                new Tag(TagType::sha256(), [$hash]),
+                Tag::fromArray([TagType::HASHTAG, $verb]),
+                Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+                Tag::fromArray([TagType::SHA256, $hash]),
             ]),
         )->sign($signer, $this->signatureService);
 
-        $array = $event->toArray();
-        $array['sig'] = str_repeat('0', 128);
-
-        return 'Nostr '.base64_encode((string) json_encode($array));
+        return BlossomFixtures::authHeaderWithInvalidSignature($event);
     }
 }

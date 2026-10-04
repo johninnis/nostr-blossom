@@ -22,7 +22,7 @@ final readonly class BlobValidator
     public function __construct(
         private BlobInspectorInterface $inspector,
         private UploadConstraints $constraints,
-        private BlossomAuthValidatorInterface $authValidator,
+        private BlossomAccessGate $gate,
     ) {
     }
 
@@ -37,7 +37,7 @@ final readonly class BlobValidator
 
         return $this->guardStorable($blob, $mimeType)
             ?? $this->guardDeclaredHash($blob, $declaredHash)
-            ?? $this->authValidator->requireAuthorisedBlob($auth, $blob->getHash())
+            ?? $this->gate->authoriseReceivedBlob($auth, $blob->getHash())
             ?? new StorableBlob($blob, $pending->getPath(), $mimeType);
     }
 
@@ -49,7 +49,7 @@ final readonly class BlobValidator
         }
 
         return $this->constraints->guardUploadSize($blob->getSize())
-            ?? $this->authValidator->requireAuthorisedBlob($auth, $blob->getHash())
+            ?? $this->gate->authoriseReceivedBlob($auth, $blob->getHash())
             ?? $blob->getHash();
     }
 

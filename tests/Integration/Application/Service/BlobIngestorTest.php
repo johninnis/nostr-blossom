@@ -8,10 +8,13 @@ use Innis\Nostr\Blossom\Application\DTO\PendingBlob;
 use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobInspectorInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
+use Innis\Nostr\Blossom\Application\Port\BlossomPolicyInterface;
 use Innis\Nostr\Blossom\Application\Port\MediaOptimiserInterface;
+use Innis\Nostr\Blossom\Application\Service\BlobArchive;
 use Innis\Nostr\Blossom\Application\Service\BlobDescriptorFactory;
 use Innis\Nostr\Blossom\Application\Service\BlobIngestor;
 use Innis\Nostr\Blossom\Application\Service\BlobValidator;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Domain\Failure\AuthorisationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlobReadFailure;
@@ -22,11 +25,11 @@ use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -181,10 +184,9 @@ final class BlobIngestorTest extends TestCase
     private function ingestor(BlobStoreInterface $store, BlobInspectorInterface $inspector): BlobIngestor
     {
         return new BlobIngestor(
-            new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->authValidator),
+            new BlobValidator($inspector, $this->config->getUploadConstraints(), new BlossomAccessGate($this->authValidator, $this->createStub(BlossomPolicyInterface::class))),
             new BlobDescriptorFactory($this->config->getIdentity(), $this->clock()),
-            $store,
-            $this->createStub(BlobIndexInterface::class),
+            new BlobArchive($store, $this->createStub(BlobIndexInterface::class)),
         );
     }
 
@@ -199,15 +201,15 @@ final class BlobIngestorTest extends TestCase
     private function authEvent(string $verb, ?string $hash = null): Event
     {
         $tags = [
-            new Tag(TagType::hashtag(), [$verb]),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, $verb]),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::sha256(), [$hash]);
+            $tags[] = Tag::fromArray([TagType::SHA256, $hash]);
         }
 
-        return RumourFactory::createCustomKind(
+        return Rumour::draft(
             $this->ownerKeyPair->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Blossom auth'),

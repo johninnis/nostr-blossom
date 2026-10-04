@@ -51,7 +51,7 @@ final class BlobDescriptorTest extends TestCase
             size: 1024,
             type: BlossomFixtures::mimeType('image/png'),
             uploaded: Timestamp::fromInt(1_000_000),
-            nip94: new FileMetadata(
+            nip94: FileMetadata::from(
                 url: 'https://blossom.test/'.$sha256.'.png',
                 mimeType: 'image/png',
                 hash: $sha256,

@@ -16,12 +16,15 @@ use Innis\Nostr\Core\Domain\Failure\AuthHeaderDecodeFailure;
 use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
+use Innis\Nostr\Core\Domain\ValueObject\CreatedAtWindow;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
 use Override;
 
 final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterface
 {
+    private const int CLOCK_SKEW_TOLERANCE_SECONDS = 60;
+
     public function __construct(
         private SignatureServiceInterface $signatureService,
         private ClockInterface $clock,
@@ -73,7 +76,8 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
             return AuthenticationFailure::missingHeader();
         }
 
-        $decoded = NostrAuthHeaderCodec::decode($header);
+        // Deliberate: the Blossom reader, not the NIP-98 one: BUD-11's unpadded base64url, and the padded base64 clients wrote before it — see nostr-adrs ADR-0111
+        $decoded = NostrAuthHeaderCodec::decodeBlossom($header);
         if ($decoded instanceof Event) {
             return $decoded;
         }
@@ -102,10 +106,12 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
             : AuthorisationFailure::serverNotAuthorised();
     }
 
-    // Deliberate: BUD-11's created_at-in-the-past is enforced as reasonableness, tolerating client clock skew — see ADR-0016
+    // Deliberate: BUD-11's created_at-in-the-past is enforced with at most sixty seconds of clock-skew tolerance, the bound NIP-98 uses, and the shared window's ten years behind — see ADR-0027 (nostr-adrs ADR-0097)
     private function verifyCreatedAt(Event $event): ?BlossomFailure
     {
-        return $event->getCreatedAt()->isReasonableAt($this->clock->now()) ? null : AuthenticationFailure::unreasonableCreatedAt();
+        return new CreatedAtWindow(secondsAhead: self::CLOCK_SKEW_TOLERANCE_SECONDS)->admits($event->getCreatedAt(), $this->clock->now())
+            ? null
+            : AuthenticationFailure::unreasonableCreatedAt();
     }
 
     // Deliberate: a token must state an expiry, every stated expiry must parse, and any one that has passed expires it — tag order cannot change the answer — see ADR-0023

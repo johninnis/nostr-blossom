@@ -9,11 +9,11 @@ use Innis\Nostr\Blossom\Application\UseCase\ReportBlobUseCase;
 use Innis\Nostr\Blossom\Domain\Failure\BlobReportFailure;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Infrastructure\Crypto\Secp256k1Signer;
@@ -79,7 +79,7 @@ final class ReportBlobTest extends TestCase
 
     public function testRejectsWrongKind(): void
     {
-        $event = RumourFactory::createTextNote($this->keyPair->getPublicKey(), 'hello')
+        $event = Rumour::draft($this->keyPair->getPublicKey(), EventKind::fromInt(EventKind::TEXT_NOTE), EventContent::fromString('hello'))
             ->sign($this->keyPair, $this->signatureService);
 
         $report = new ReportBlobUseCase($this->createStub(BlobReportStoreInterface::class), $this->signatureService);
@@ -106,9 +106,9 @@ final class ReportBlobTest extends TestCase
 
     private function reportTags(string ...$hashes): TagCollection
     {
-        $tags = [new Tag(TagType::fromString('report'), ['other'])];
+        $tags = [Tag::fromArray([(string) TagType::fromString('report'), 'other'])];
         foreach ($hashes as $hash) {
-            $tags[] = new Tag(TagType::sha256(), [$hash]);
+            $tags[] = Tag::fromArray([TagType::SHA256, $hash]);
         }
 
         return new TagCollection($tags);
@@ -116,7 +116,7 @@ final class ReportBlobTest extends TestCase
 
     private function signedReport(TagCollection $tags): Event
     {
-        return RumourFactory::createCustomKind(
+        return Rumour::draft(
             $this->keyPair->getPublicKey(),
             EventKind::fromInt(EventKind::REPORTING),
             EventContent::fromString('spam'),

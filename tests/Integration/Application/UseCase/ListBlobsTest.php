@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Innis\Nostr\Blossom\Tests\Integration\Application\UseCase;
 
 use Innis\Nostr\Blossom\Application\Port\BlobIndexInterface;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\ListBlobsUseCase;
@@ -18,11 +19,11 @@ use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -34,8 +35,7 @@ final class ListBlobsTest extends TestCase
     private ServerConfig $config;
     private KeyPair $ownerKeyPair;
     private SignatureServiceInterface $signatureService;
-    private BlossomAuthValidator $authValidator;
-    private TenantBlossomPolicy $policy;
+    private BlossomAccessGate $gate;
 
     protected function setUp(): void
     {
@@ -49,8 +49,10 @@ final class ListBlobsTest extends TestCase
             allowedMimeTypes: ['image/png'],
             baseUrl: 'https://blossom.test',
         );
-        $this->authValidator = new BlossomAuthValidator($this->signatureService, $clock, $this->config->getIdentity());
-        $this->policy = new TenantBlossomPolicy($this->config->getTenantPubkeys());
+        $this->gate = new BlossomAccessGate(
+            new BlossomAuthValidator($this->signatureService, $clock, $this->config->getIdentity()),
+            new TenantBlossomPolicy($this->config->getTenantPubkeys()),
+        );
     }
 
     public function testReturnsOwnBlobsForAuthenticatedTenant(): void
@@ -67,7 +69,7 @@ final class ListBlobsTest extends TestCase
         $index = $this->createStub(BlobIndexInterface::class);
         $index->method('list')->willReturn(new BlobDescriptorCollection([$descriptor]));
 
-        $listBlobs = new ListBlobsUseCase($index, $this->authValidator, $this->policy);
+        $listBlobs = new ListBlobsUseCase($index, $this->gate);
         $result = $listBlobs->execute($this->authHeader(), $this->ownerKeyPair->getPublicKey(), new ListQuery());
 
         self::assertInstanceOf(BlobDescriptorCollection::class, $result);
@@ -80,20 +82,39 @@ final class ListBlobsTest extends TestCase
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::never())->method('list');
 
-        $listBlobs = new ListBlobsUseCase($index, $this->authValidator, $this->policy);
+        $listBlobs = new ListBlobsUseCase($index, $this->gate);
         $result = $listBlobs->execute($this->authHeader(), BlossomFixtures::publicKey(str_repeat('cd', 32)), new ListQuery());
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
     }
 
-    public function testAdmissionRejectsNonTenantBeforeSignatureIsVerified(): void
+    public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
     {
         $stranger = KeyPair::generate($this->signatureService);
-        $index = $this->createMock(BlobIndexInterface::class);
-        $index->expects(self::never())->method('list');
+        $listBlobs = new ListBlobsUseCase($this->createStub(BlobIndexInterface::class), $this->gate);
 
-        $listBlobs = new ListBlobsUseCase($index, $this->authValidator, $this->policy);
+        $trusted = $listBlobs->execute($this->invalidlySignedHeader($this->ownerKeyPair), $this->ownerKeyPair->getPublicKey(), new ListQuery());
+        $unknown = $listBlobs->execute($this->invalidlySignedHeader($stranger), $stranger->getPublicKey(), new ListQuery());
+
+        self::assertEquals($trusted, $unknown);
+    }
+
+    public function testInvalidSignatureFromAnUnknownKeyIsRefusedAsUnauthenticated(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $listBlobs = new ListBlobsUseCase($this->createStub(BlobIndexInterface::class), $this->gate);
+
         $result = $listBlobs->execute($this->invalidlySignedHeader($stranger), $stranger->getPublicKey(), new ListQuery());
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testValidlySignedUnknownKeyIsRefusedByPolicy(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $listBlobs = new ListBlobsUseCase($this->createStub(BlobIndexInterface::class), $this->gate);
+
+        $result = $listBlobs->execute(BlossomFixtures::authHeader($this->listAuthEvent($stranger)), $stranger->getPublicKey(), new ListQuery());
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
     }
@@ -103,7 +124,7 @@ final class ListBlobsTest extends TestCase
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::never())->method('list');
 
-        $listBlobs = new ListBlobsUseCase($index, $this->authValidator, $this->policy);
+        $listBlobs = new ListBlobsUseCase($index, $this->gate);
         $result = $listBlobs->execute('', $this->ownerKeyPair->getPublicKey(), new ListQuery());
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
@@ -111,25 +132,22 @@ final class ListBlobsTest extends TestCase
 
     private function authHeader(): string
     {
-        return 'Nostr '.base64_encode((string) json_encode($this->listAuthEvent($this->ownerKeyPair)->toArray()));
+        return BlossomFixtures::authHeader($this->listAuthEvent($this->ownerKeyPair));
     }
 
     private function invalidlySignedHeader(KeyPair $keyPair): string
     {
-        $data = $this->listAuthEvent($keyPair)->toArray();
-        $data['sig'] = str_repeat('0', 128);
-
-        return 'Nostr '.base64_encode((string) json_encode($data));
+        return BlossomFixtures::authHeaderWithInvalidSignature($this->listAuthEvent($keyPair));
     }
 
     private function listAuthEvent(KeyPair $keyPair): Event
     {
         $tags = new TagCollection([
-            new Tag(TagType::hashtag(), ['list']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'list']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ]);
 
-        return RumourFactory::createCustomKind(
+        return Rumour::draft(
             $keyPair->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('List blobs'),

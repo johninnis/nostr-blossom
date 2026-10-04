@@ -10,12 +10,15 @@ use Innis\Nostr\Blossom\Application\Port\BlobInspectorInterface;
 use Innis\Nostr\Blossom\Application\Port\BlobStoreInterface;
 use Innis\Nostr\Blossom\Application\Port\MediaOptimiserInterface;
 use Innis\Nostr\Blossom\Application\Port\PendingBlobSourceInterface;
+use Innis\Nostr\Blossom\Application\Service\BlobArchive;
 use Innis\Nostr\Blossom\Application\Service\BlobDescriptorFactory;
 use Innis\Nostr\Blossom\Application\Service\BlobIngestor;
 use Innis\Nostr\Blossom\Application\Service\BlobValidator;
+use Innis\Nostr\Blossom\Application\Service\BlossomAccessGate;
 use Innis\Nostr\Blossom\Application\Service\BlossomAuthValidator;
 use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\OptimiseMediaUseCase;
+use Innis\Nostr\Blossom\Domain\Failure\AuthenticationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\AuthorisationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlobReadFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlobTooLargeFailure;
@@ -28,12 +31,14 @@ use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
-use Innis\Nostr\Core\Domain\Factory\RumourFactory;
+use Innis\Nostr\Core\Domain\Entity\Event;
+use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
 use Innis\Nostr\Core\Domain\ValueObject\Content\FileMetadata;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
+use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
@@ -295,6 +300,40 @@ final class OptimiseMediaTest extends TestCase
         self::assertSame($tooLarge, $result);
     }
 
+    public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'original');
+        $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class));
+
+        $trusted = $optimise->execute($this->withInvalidSignature($this->authHeader($hash)), $this->source('/tmp/input', 'image/png'));
+        $unknown = $optimise->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), $this->source('/tmp/input', 'image/png'));
+
+        self::assertEquals($trusted, $unknown);
+    }
+
+    public function testInvalidSignatureFromAnUnknownKeyIsRefusedAsUnauthenticated(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'original');
+        $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class));
+
+        $result = $optimise->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), $this->source('/tmp/input', 'image/png'));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testValidlySignedUnknownKeyIsRefusedByPolicy(): void
+    {
+        $stranger = KeyPair::generate($this->signatureService);
+        $hash = hash('sha256', 'original');
+        $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class));
+
+        $result = $optimise->execute($this->authHeader($hash, $stranger), $this->source('/tmp/input', 'image/png'));
+
+        self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
     private function inspector(IncomingBlob $input, IncomingBlob $produced): BlobInspectorInterface
     {
         $inspector = $this->createStub(BlobInspectorInterface::class);
@@ -306,9 +345,10 @@ final class OptimiseMediaTest extends TestCase
 
     private function useCase(BlobStoreInterface $store, BlobIndexInterface $index, BlobInspectorInterface $inspector, MediaOptimiserInterface $optimiser): OptimiseMediaUseCase
     {
-        $ingestor = new BlobIngestor(new BlobValidator($inspector, $this->config->getUploadConstraints(), $this->authValidator), new BlobDescriptorFactory($this->config->getIdentity(), $this->clock()), $store, $index);
+        $gate = new BlossomAccessGate($this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()));
+        $ingestor = new BlobIngestor(new BlobValidator($inspector, $this->config->getUploadConstraints(), $gate), new BlobDescriptorFactory($this->config->getIdentity(), $this->clock()), new BlobArchive($store, $index));
 
-        return new OptimiseMediaUseCase($optimiser, $this->authValidator, new TenantBlossomPolicy($this->config->getTenantPubkeys()), $ingestor);
+        return new OptimiseMediaUseCase($optimiser, $gate, $ingestor);
     }
 
     private function source(string $path, string $contentType): PendingBlobSourceInterface
@@ -327,24 +367,34 @@ final class OptimiseMediaTest extends TestCase
         return $clock;
     }
 
-    private function authHeader(?string $hash = null): string
+    private function authHeader(?string $hash = null, ?KeyPair $signer = null): string
     {
+        $signer ??= $this->ownerKeyPair;
+
         $tags = [
-            new Tag(TagType::hashtag(), ['media']),
-            new Tag(TagType::expiration(), [(string) (time() + 3600)]),
+            Tag::fromArray([TagType::HASHTAG, 'media']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ];
 
         if (null !== $hash) {
-            $tags[] = new Tag(TagType::sha256(), [$hash]);
+            $tags[] = Tag::fromArray([TagType::SHA256, $hash]);
         }
 
-        $event = RumourFactory::createCustomKind(
-            $this->ownerKeyPair->getPublicKey(),
+        $event = Rumour::draft(
+            $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_BLOB),
             EventContent::fromString('Optimise media'),
             new TagCollection($tags),
-        )->sign($this->ownerKeyPair, $this->signatureService);
+        )->sign($signer, $this->signatureService);
 
-        return 'Nostr '.base64_encode((string) json_encode($event->toArray()));
+        return BlossomFixtures::authHeader($event);
+    }
+
+    private function withInvalidSignature(string $header): string
+    {
+        $event = NostrAuthHeaderCodec::decodeBlossom($header);
+        self::assertInstanceOf(Event::class, $event);
+
+        return BlossomFixtures::authHeaderWithInvalidSignature($event);
     }
 }

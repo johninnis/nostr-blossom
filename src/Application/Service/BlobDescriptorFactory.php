@@ -45,7 +45,7 @@ final readonly class BlobDescriptorFactory
             return null;
         }
 
-        return new FileMetadata(
+        return FileMetadata::from(
             url: (string) $url,
             mimeType: (string) $storable->getMimeType(),
             hash: $blob->getHash()->toHex(),

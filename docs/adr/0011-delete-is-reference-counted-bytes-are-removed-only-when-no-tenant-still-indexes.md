@@ -12,11 +12,11 @@ A delete is scoped to one tenant — `DeleteBlobUseCase` enforces that a caller 
 
 ## Decision
 
-`BlobRemover.removeForTenant` removes the tenant's index entry first (`BlobIndexInterface::deleteForTenant`). It then deletes the stored bytes (`BlobStoreInterface::delete`) **only if** no index entry for that hash remains (`BlobIndexInterface::findByHash` returns null). If another tenant still indexes the hash, the bytes stay. The method returns whether the tenant had an entry to delete at all, which the use case maps to 404 when false.
+`BlobArchive::removeForTenant` (first recorded on `BlobRemover`, which ADR-0029 folded into the archive) removes the tenant's index entry first (`BlobIndexInterface::deleteForTenant`). It then deletes the stored bytes (`BlobStoreInterface::delete`) **only if** no index entry for that hash remains (`BlobIndexInterface::findByHash` returns null). If another tenant still indexes the hash, the bytes stay. The method returns whether the tenant had an entry to delete at all, which the use case maps to 404 when false.
 
 ## Consequences
 
 - Deleting one tenant's copy never affects another tenant's. The bytes survive exactly as long as some tenant indexes them, which is the correct lifetime for shared, content-addressed storage.
 - The byte deletion is conditional on a fresh `findByHash` read after the index delete, so the reference count is read from the index of record rather than tracked separately — there is no counter to drift out of sync. The cost is one extra index read per delete.
-- This is not a smell to "simplify" into an unconditional `store->delete`: that would reintroduce the cross-tenant data-loss bug. The conditional delete is pinned by the remover's tests.
+- This is not a smell to "simplify" into an unconditional `store->delete`: that would reintroduce the cross-tenant data-loss bug. The conditional delete is pinned by the archive's tests.
 - There is a benign race under concurrent uploads: a second tenant could index the hash between the `deleteForTenant` and the `findByHash`, or the bytes could be deleted just as another upload re-references them. Resolving that is the host's storage adapter's concern (its own locking or re-materialisation on the next upload), not this orchestration's; the content-addressed store can always reconstruct the bytes from a fresh upload of the same content.
