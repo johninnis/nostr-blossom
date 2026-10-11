@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Innis\Nostr\Blossom\Tests\Unit\Domain\ValueObject;
 
-use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\ListQuery;
+use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
@@ -14,12 +14,22 @@ final class ListQueryTest extends TestCase
 {
     public function testDefaultLimit(): void
     {
-        $query = new ListQuery();
+        self::assertSame(100, new ListQuery()->getLimit());
+    }
 
-        self::assertSame(100, $query->getLimit());
-        self::assertNull($query->getSince());
-        self::assertNull($query->getUntil());
-        self::assertNull($query->getCursor());
+    public function testHasNoSinceByDefault(): void
+    {
+        self::assertNull(new ListQuery()->getSince());
+    }
+
+    public function testHasNoUntilByDefault(): void
+    {
+        self::assertNull(new ListQuery()->getUntil());
+    }
+
+    public function testHasNoCursorByDefault(): void
+    {
+        self::assertNull(new ListQuery()->getCursor());
     }
 
     public function testCustomLimit(): void
@@ -43,16 +53,14 @@ final class ListQueryTest extends TestCase
         new ListQuery(limit: 5000);
     }
 
-    public function testWithFilters(): void
+    public function testCarriesTheSinceFilter(): void
     {
-        $query = new ListQuery(since: Timestamp::fromInt(1000), until: Timestamp::fromInt(2000));
+        self::assertSame(1000, new ListQuery(since: Timestamp::fromInt(1000), until: Timestamp::fromInt(2000))->getSince()?->toInt());
+    }
 
-        $since = $query->getSince();
-        $until = $query->getUntil();
-        self::assertNotNull($since);
-        self::assertNotNull($until);
-        self::assertSame(1000, $since->toInt());
-        self::assertSame(2000, $until->toInt());
+    public function testCarriesTheUntilFilter(): void
+    {
+        self::assertSame(2000, new ListQuery(since: Timestamp::fromInt(1000), until: Timestamp::fromInt(2000))->getUntil()?->toInt());
     }
 
     public function testRejectsLimitBelowOne(): void
@@ -69,32 +77,29 @@ final class ListQueryTest extends TestCase
         new ListQuery(since: Timestamp::fromInt(2000), until: Timestamp::fromInt(1000));
     }
 
-    public function testFromQueryStringParsesValues(): void
+    public function testFromQueryStringParsesTheLimit(): void
     {
-        $query = ListQuery::tryFromQueryString('limit=50&since=1000&until=2000');
+        self::assertSame(50, ListQuery::tryFromQueryString('limit=50&since=1000&until=2000')?->getLimit());
+    }
 
-        self::assertNotNull($query);
-        self::assertSame(50, $query->getLimit());
-        self::assertSame(1000, $query->getSince()?->toInt());
-        self::assertSame(2000, $query->getUntil()?->toInt());
+    public function testFromQueryStringParsesTheSince(): void
+    {
+        self::assertSame(1000, ListQuery::tryFromQueryString('limit=50&since=1000&until=2000')?->getSince()?->toInt());
+    }
+
+    public function testFromQueryStringParsesTheUntil(): void
+    {
+        self::assertSame(2000, ListQuery::tryFromQueryString('limit=50&since=1000&until=2000')?->getUntil()?->toInt());
     }
 
     public function testCarriesACursor(): void
     {
-        $cursor = BlobHash::tryFromHex(str_repeat('a', 64));
-        self::assertNotNull($cursor);
-
-        $query = new ListQuery(cursor: $cursor);
-
-        self::assertSame($cursor->toHex(), $query->getCursor()?->toHex());
+        self::assertSame(str_repeat('a', 64), new ListQuery(cursor: BlossomFixtures::blobHash(str_repeat('a', 64)))->getCursor()?->toHex());
     }
 
     public function testFromQueryStringParsesCursor(): void
     {
-        $query = ListQuery::tryFromQueryString('cursor='.str_repeat('b', 64));
-
-        self::assertNotNull($query);
-        self::assertSame(str_repeat('b', 64), $query->getCursor()?->toHex());
+        self::assertSame(str_repeat('b', 64), ListQuery::tryFromQueryString('cursor='.str_repeat('b', 64))?->getCursor()?->toHex());
     }
 
     public function testFromQueryStringRejectsMalformedCursor(): void
@@ -104,12 +109,7 @@ final class ListQueryTest extends TestCase
 
     public function testFromQueryStringDefaultsWhenAbsent(): void
     {
-        $query = ListQuery::tryFromQueryString('');
-
-        self::assertNotNull($query);
-        self::assertSame(100, $query->getLimit());
-        self::assertNull($query->getSince());
-        self::assertNull($query->getUntil());
+        self::assertEquals(new ListQuery(), ListQuery::tryFromQueryString(''));
     }
 
     public function testFromQueryStringRejectsNonNumericLimit(): void

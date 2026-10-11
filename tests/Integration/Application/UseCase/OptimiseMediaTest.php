@@ -32,11 +32,9 @@ use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
-use Innis\Nostr\Core\Domain\ValueObject\Content\FileMetadata;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
 use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
@@ -66,238 +64,259 @@ final class OptimiseMediaTest extends TestCase
         $this->authValidator = new BlossomAuthValidator($this->signatureService, $this->clock(), $this->config->getIdentity());
     }
 
-    public function testSuccessfulOptimise(): void
+    public function testSuccessfulOptimiseStoresTheOutput(): void
     {
-        $originalHash = hash('sha256', 'original');
-        $optimisedHash = hash('sha256', 'optimised');
-
-        $inspector = $this->inspector(
-            new IncomingBlob(BlossomFixtures::blobHash($originalHash), 4096),
-            new IncomingBlob(BlossomFixtures::blobHash($optimisedHash), 1024),
-        );
-
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-        $optimiser->method('optimise')->willReturn(new PendingBlob('/tmp/optimised', BlossomFixtures::mimeType('image/webp')));
-
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('store');
+
+        $this->optimiseIntoNewFile($store, $this->createStub(BlobIndexInterface::class), $this->newFileInspector());
+    }
+
+    public function testSuccessfulOptimiseDiscardsTheOriginal(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
 
+        $this->optimiseIntoNewFile($store, $this->createStub(BlobIndexInterface::class), $this->newFileInspector());
+    }
+
+    public function testSuccessfulOptimiseIndexesTheOutput(): void
+    {
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::once())->method('save');
 
-        $optimise = $this->useCase($store, $index, $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader($originalHash), $this->source('/tmp/input', 'image/png'));
+        $this->optimiseIntoNewFile($this->createStub(BlobStoreInterface::class), $index, $this->newFileInspector());
+    }
 
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        self::assertSame($optimisedHash, $result->getSha256()->toHex());
-        self::assertSame(1024, $result->getSize());
-        self::assertSame('image/webp', (string) $result->getType());
-        self::assertStringEndsWith('/'.$optimisedHash.'.webp', (string) $result->getUrl());
-        $nip94 = $result->getNip94();
-        self::assertInstanceOf(FileMetadata::class, $nip94);
-        self::assertSame($optimisedHash, $nip94->getHash());
-        self::assertSame($originalHash, $nip94->getOriginalHash());
+    public function testSuccessfulOptimiseDescribesTheOutputHash(): void
+    {
+        self::assertSame(hash('sha256', 'optimised'), BlossomFixtures::descriptorIn($this->optimisedNewFile())->getSha256()->toHex());
+    }
+
+    public function testSuccessfulOptimiseDescribesTheOutputSize(): void
+    {
+        self::assertSame(1024, BlossomFixtures::descriptorIn($this->optimisedNewFile())->getSize());
+    }
+
+    public function testSuccessfulOptimiseDescribesTheOutputType(): void
+    {
+        self::assertSame('image/webp', (string) BlossomFixtures::descriptorIn($this->optimisedNewFile())->getType());
+    }
+
+    public function testSuccessfulOptimiseAddressesTheOutputByItsHash(): void
+    {
+        self::assertStringEndsWith('/'.hash('sha256', 'optimised').'.webp', (string) BlossomFixtures::descriptorIn($this->optimisedNewFile())->getUrl());
+    }
+
+    public function testSuccessfulOptimiseCarriesTheOutputHashInItsNip94(): void
+    {
+        self::assertSame(hash('sha256', 'optimised'), BlossomFixtures::descriptorIn($this->optimisedNewFile())->getNip94()?->getHash());
+    }
+
+    public function testSuccessfulOptimiseCarriesTheOriginalHashInItsNip94(): void
+    {
+        self::assertSame(hash('sha256', 'original'), BlossomFixtures::descriptorIn($this->optimisedNewFile())->getNip94()?->getOriginalHash());
     }
 
     // Deliberate: pins ADR-0012 — the discarded original is inspected without a media decode, only the stored output decodes media
-    public function testInspectsOriginalWithoutMediaAndOutputWithMedia(): void
+    public function testInspectsOriginalWithoutMedia(): void
     {
-        $originalHash = hash('sha256', 'original');
-        $optimisedHash = hash('sha256', 'optimised');
-
         $inspector = $this->createMock(BlobInspectorInterface::class);
-        $inspector->expects(self::once())->method('inspect')->with('/tmp/input')
-            ->willReturn(new IncomingBlob(BlossomFixtures::blobHash($originalHash), 4096));
-        $inspector->expects(self::once())->method('inspectWithMedia')->with('/tmp/optimised')
-            ->willReturn(new IncomingBlob(BlossomFixtures::blobHash($optimisedHash), 1024));
+        $inspector->expects(self::once())->method('inspect')->with('/tmp/input')->willReturn($this->originalBlob());
+        $inspector->method('inspectWithMedia')->willReturn($this->optimisedBlob());
 
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-        $optimiser->method('optimise')->willReturn(new PendingBlob('/tmp/optimised', BlossomFixtures::mimeType('image/webp')));
+        $this->optimiseIntoNewFile($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $inspector);
+    }
 
-        $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader($originalHash), $this->source('/tmp/input', 'image/png'));
+    // Deliberate: pins ADR-0012 — the discarded original is inspected without a media decode, only the stored output decodes media
+    public function testInspectsOutputWithMedia(): void
+    {
+        $inspector = $this->createMock(BlobInspectorInterface::class);
+        $inspector->method('inspect')->willReturn($this->originalBlob());
+        $inspector->expects(self::once())->method('inspectWithMedia')->with('/tmp/optimised')->willReturn($this->optimisedBlob());
 
-        self::assertInstanceOf(BlobDescriptor::class, $result);
+        $this->optimiseIntoNewFile($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $inspector);
     }
 
     public function testInPlaceOptimiserKeepsProducedFile(): void
     {
-        $originalHash = hash('sha256', 'original');
-        $optimisedHash = hash('sha256', 'optimised');
-
-        $inspector = $this->inspector(
-            new IncomingBlob(BlossomFixtures::blobHash($originalHash), 4096),
-            new IncomingBlob(BlossomFixtures::blobHash($optimisedHash), 1024),
-        );
-
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-        $optimiser->method('optimise')->willReturn(new PendingBlob('/tmp/input', BlossomFixtures::mimeType('image/png')));
-
         $store = $this->createMock(BlobStoreInterface::class);
-        $store->expects(self::once())->method('store');
         $store->expects(self::never())->method('discard');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader($originalHash), $this->source('/tmp/input', 'image/png'));
+        $this->optimiseInPlace($store);
+    }
 
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        self::assertSame($optimisedHash, $result->getSha256()->toHex());
+    public function testInPlaceOptimiserStoresProducedFile(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
+        $store->expects(self::once())->method('store');
+
+        $this->optimiseInPlace($store);
+    }
+
+    public function testInPlaceOptimiserDescribesProducedFileByItsHash(): void
+    {
+        self::assertSame(hash('sha256', 'optimised'), BlossomFixtures::descriptorIn($this->optimiseInPlace($this->createStub(BlobStoreInterface::class)))->getSha256()->toHex());
     }
 
     public function testRejectsUnsupportedType(): void
     {
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(false);
+        self::assertInstanceOf(UnsupportedMimeTypeFailure::class, $this->optimiseUnsupportedType($this->createStub(BlobStoreInterface::class)));
+    }
 
+    public function testDiscardsInputOfUnsupportedType(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
+
+        $this->optimiseUnsupportedType($store);
+    }
+
+    public function testDoesNotStoreInputOfUnsupportedType(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $optimiser);
-        $result = $optimise->execute($this->authHeader(), $this->source('/tmp/input', 'application/pdf'));
-
-        self::assertInstanceOf(UnsupportedMimeTypeFailure::class, $result);
+        $this->optimiseUnsupportedType($store);
     }
 
     public function testRejectsBlobNotAuthorisedByHashTag(): void
     {
-        $inspector = $this->createStub(BlobInspectorInterface::class);
-        $inspector->method('inspect')->willReturn(
-            new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'original')), 4096),
-        );
+        self::assertInstanceOf(AuthorisationFailure::class, $this->optimiseBlobTheTokenDoesNotName($this->createStub(BlobStoreInterface::class)));
+    }
 
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-
+    public function testDiscardsBlobNotAuthorisedByHashTag(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
+
+        $this->optimiseBlobTheTokenDoesNotName($store);
+    }
+
+    public function testDoesNotStoreBlobNotAuthorisedByHashTag(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader(hash('sha256', 'a different blob')), $this->source('/tmp/input', 'image/png'));
-
-        self::assertInstanceOf(AuthorisationFailure::class, $result);
+        $this->optimiseBlobTheTokenDoesNotName($store);
     }
 
     public function testRejectsWhenOriginalIsUnreadable(): void
     {
-        $inspector = $this->createStub(BlobInspectorInterface::class);
-        $inspector->method('inspect')->willThrowException(new RuntimeException('cannot read original'));
+        self::assertInstanceOf(BlobReadFailure::class, $this->optimiseUnreadableOriginal($this->createStub(BlobStoreInterface::class)));
+    }
 
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-
+    public function testDiscardsOriginalWhenItIsUnreadable(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
+
+        $this->optimiseUnreadableOriginal($store);
+    }
+
+    public function testDoesNotStoreWhenOriginalIsUnreadable(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
-
-        self::assertInstanceOf(BlobReadFailure::class, $result);
+        $this->optimiseUnreadableOriginal($store);
     }
 
     public function testRejectsWhenOptimiserFails(): void
     {
-        $originalHash = hash('sha256', 'original');
+        self::assertInstanceOf(MediaOptimisationFailure::class, $this->optimiseWithFailingOptimiser($this->createStub(BlobStoreInterface::class)));
+    }
 
-        $inspector = $this->createStub(BlobInspectorInterface::class);
-        $inspector->method('inspect')->willReturn(
-            new IncomingBlob(BlossomFixtures::blobHash($originalHash), 4096),
-        );
-
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-        $optimiser->method('optimise')->willThrowException(new RuntimeException('encoder crashed'));
-
+    public function testDiscardsOriginalWhenOptimiserFails(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
+
+        $this->optimiseWithFailingOptimiser($store);
+    }
+
+    public function testDoesNotStoreWhenOptimiserFails(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader($originalHash), $this->source('/tmp/input', 'image/png'));
-
-        self::assertInstanceOf(MediaOptimisationFailure::class, $result);
+        $this->optimiseWithFailingOptimiser($store);
     }
 
     public function testRejectsOptimiserOutputWithDisallowedType(): void
     {
-        $originalHash = hash('sha256', 'original');
+        self::assertInstanceOf(UnsupportedMimeTypeFailure::class, $this->optimiseIntoDisallowedType($this->createStub(BlobStoreInterface::class)));
+    }
 
-        $inspector = $this->inspector(
-            new IncomingBlob(BlossomFixtures::blobHash($originalHash), 4096),
-            new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'optimised')), 1024),
-        );
-
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-        $optimiser->method('optimise')->willReturn(new PendingBlob('/tmp/optimised', BlossomFixtures::mimeType('image/gif')));
-
+    public function testDoesNotStoreOptimiserOutputWithDisallowedType(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader($originalHash), $this->source('/tmp/input', 'image/png'));
-
-        self::assertInstanceOf(UnsupportedMimeTypeFailure::class, $result);
+        $this->optimiseIntoDisallowedType($store);
     }
 
     public function testRejectsOptimiserOutputExceedingMaxSize(): void
     {
-        $originalHash = hash('sha256', 'original');
+        self::assertInstanceOf(BlobTooLargeFailure::class, $this->optimiseIntoOversizedOutput($this->createStub(BlobStoreInterface::class)));
+    }
 
-        $inspector = $this->inspector(
-            new IncomingBlob(BlossomFixtures::blobHash($originalHash), 4096),
-            new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'optimised')), 2 * 1024 * 1024),
-        );
-
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimiser->method('supports')->willReturn(true);
-        $optimiser->method('optimise')->willReturn(new PendingBlob('/tmp/optimised', BlossomFixtures::mimeType('image/webp')));
-
+    public function testDoesNotStoreOptimiserOutputExceedingMaxSize(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser);
-        $result = $optimise->execute($this->authHeader($originalHash), $this->source('/tmp/input', 'image/png'));
-
-        self::assertInstanceOf(BlobTooLargeFailure::class, $result);
+        $this->optimiseIntoOversizedOutput($store);
     }
 
-    public function testDoesNotStageBodyWhenAuthIsMissing(): void
+    public function testRejectsMissingAuth(): void
     {
-        $optimiser = $this->createStub(MediaOptimiserInterface::class);
-        $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $optimiser);
-
-        $source = $this->createMock(PendingBlobSourceInterface::class);
-        $source->expects(self::never())->method('stage');
-
-        $result = $optimise->execute('', $source);
+        $result = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class))
+            ->execute('', $this->createStub(PendingBlobSourceInterface::class));
 
         self::assertInstanceOf(BlossomFailure::class, $result);
     }
 
-    public function testReturnsTheSourceFailureWithoutIngesting(): void
+    public function testDoesNotStageBodyWhenAuthIsMissing(): void
+    {
+        $source = $this->createMock(PendingBlobSourceInterface::class);
+        $source->expects(self::never())->method('stage');
+
+        $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class))
+            ->execute('', $source);
+    }
+
+    public function testReturnsTheSourceFailure(): void
     {
         $tooLarge = BlobTooLargeFailure::beyondMaximum(1024);
-        $source = $this->createStub(PendingBlobSourceInterface::class);
-        $source->method('stage')->willReturn($tooLarge);
 
+        $result = $this->optimiseFailingSource($tooLarge, $this->createStub(BlobStoreInterface::class), $this->createStub(MediaOptimiserInterface::class));
+
+        self::assertSame($tooLarge, $result);
+    }
+
+    public function testDoesNotOptimiseWhenTheSourceFails(): void
+    {
         $optimiser = $this->createMock(MediaOptimiserInterface::class);
         $optimiser->expects(self::never())->method('optimise');
 
+        $this->optimiseFailingSource(BlobTooLargeFailure::beyondMaximum(1024), $this->createStub(BlobStoreInterface::class), $optimiser);
+    }
+
+    public function testDoesNotStoreWhenTheSourceFails(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
+
+        $this->optimiseFailingSource(BlobTooLargeFailure::beyondMaximum(1024), $store, $this->createStub(MediaOptimiserInterface::class));
+    }
+
+    public function testDoesNotDiscardWhenTheSourceFails(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('discard');
 
-        $optimise = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $optimiser);
-        $result = $optimise->execute($this->authHeader(), $source);
-
-        self::assertSame($tooLarge, $result);
+        $this->optimiseFailingSource(BlobTooLargeFailure::beyondMaximum(1024), $store, $this->createStub(MediaOptimiserInterface::class));
     }
 
     public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
@@ -306,8 +325,8 @@ final class OptimiseMediaTest extends TestCase
         $hash = hash('sha256', 'original');
         $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class));
 
-        $trusted = $optimise->execute($this->withInvalidSignature($this->authHeader($hash)), $this->source('/tmp/input', 'image/png'));
-        $unknown = $optimise->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), $this->source('/tmp/input', 'image/png'));
+        $trusted = $optimise->execute($this->invalidlySignedHeader($hash), $this->source('/tmp/input', 'image/png'));
+        $unknown = $optimise->execute($this->invalidlySignedHeader($hash, $stranger), $this->source('/tmp/input', 'image/png'));
 
         self::assertEquals($trusted, $unknown);
     }
@@ -318,7 +337,7 @@ final class OptimiseMediaTest extends TestCase
         $hash = hash('sha256', 'original');
         $optimise = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(MediaOptimiserInterface::class));
 
-        $result = $optimise->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), $this->source('/tmp/input', 'image/png'));
+        $result = $optimise->execute($this->invalidlySignedHeader($hash, $stranger), $this->source('/tmp/input', 'image/png'));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
     }
@@ -332,6 +351,118 @@ final class OptimiseMediaTest extends TestCase
         $result = $optimise->execute($this->authHeader($hash, $stranger), $this->source('/tmp/input', 'image/png'));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
+    private function optimisedNewFile(): BlobDescriptor|BlossomFailure
+    {
+        return $this->optimiseIntoNewFile($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->newFileInspector());
+    }
+
+    private function optimiseIntoNewFile(BlobStoreInterface $store, BlobIndexInterface $index, BlobInspectorInterface $inspector): BlobDescriptor|BlossomFailure
+    {
+        return $this->useCase($store, $index, $inspector, $this->optimiserProducing('/tmp/optimised', 'image/webp'))
+            ->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseInPlace(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->newFileInspector(), $this->optimiserProducing('/tmp/input', 'image/png'))
+            ->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseUnsupportedType(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        $optimiser = $this->createStub(MediaOptimiserInterface::class);
+        $optimiser->method('supports')->willReturn(false);
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $optimiser)
+            ->execute($this->authHeader(), $this->source('/tmp/input', 'application/pdf'));
+    }
+
+    private function optimiseBlobTheTokenDoesNotName(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        $inspector = $this->createStub(BlobInspectorInterface::class);
+        $inspector->method('inspect')->willReturn($this->originalBlob());
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $this->optimiserSupportingEveryType())
+            ->execute($this->authHeader(hash('sha256', 'a different blob')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseUnreadableOriginal(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        $inspector = $this->createStub(BlobInspectorInterface::class);
+        $inspector->method('inspect')->willThrowException(new RuntimeException('cannot read original'));
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $this->optimiserSupportingEveryType())
+            ->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseWithFailingOptimiser(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        $inspector = $this->createStub(BlobInspectorInterface::class);
+        $inspector->method('inspect')->willReturn($this->originalBlob());
+
+        $optimiser = $this->createStub(MediaOptimiserInterface::class);
+        $optimiser->method('supports')->willReturn(true);
+        $optimiser->method('optimise')->willThrowException(new RuntimeException('encoder crashed'));
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $optimiser)
+            ->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseIntoDisallowedType(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->newFileInspector(), $this->optimiserProducing('/tmp/optimised', 'image/gif'))
+            ->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseIntoOversizedOutput(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        $inspector = $this->inspector($this->originalBlob(), new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'optimised')), 2 * 1024 * 1024));
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $inspector, $this->optimiserProducing('/tmp/optimised', 'image/webp'))
+            ->execute($this->authHeader(hash('sha256', 'original')), $this->source('/tmp/input', 'image/png'));
+    }
+
+    private function optimiseFailingSource(BlossomFailure $sourceFailure, BlobStoreInterface $store, MediaOptimiserInterface $optimiser): BlobDescriptor|BlossomFailure
+    {
+        $source = $this->createStub(PendingBlobSourceInterface::class);
+        $source->method('stage')->willReturn($sourceFailure);
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $optimiser)
+            ->execute($this->authHeader(), $source);
+    }
+
+    private function optimiserProducing(string $path, string $mimeType): MediaOptimiserInterface
+    {
+        $optimiser = $this->createStub(MediaOptimiserInterface::class);
+        $optimiser->method('supports')->willReturn(true);
+        $optimiser->method('optimise')->willReturn(new PendingBlob($path, BlossomFixtures::mimeType($mimeType)));
+
+        return $optimiser;
+    }
+
+    private function optimiserSupportingEveryType(): MediaOptimiserInterface
+    {
+        $optimiser = $this->createStub(MediaOptimiserInterface::class);
+        $optimiser->method('supports')->willReturn(true);
+
+        return $optimiser;
+    }
+
+    private function newFileInspector(): BlobInspectorInterface
+    {
+        return $this->inspector($this->originalBlob(), $this->optimisedBlob());
+    }
+
+    private function originalBlob(): IncomingBlob
+    {
+        return new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'original')), 4096);
+    }
+
+    private function optimisedBlob(): IncomingBlob
+    {
+        return new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'optimised')), 1024);
     }
 
     private function inspector(IncomingBlob $input, IncomingBlob $produced): BlobInspectorInterface
@@ -369,8 +500,16 @@ final class OptimiseMediaTest extends TestCase
 
     private function authHeader(?string $hash = null, ?KeyPair $signer = null): string
     {
-        $signer ??= $this->ownerKeyPair;
+        return BlossomFixtures::authHeader($this->authEvent($hash, $signer ?? $this->ownerKeyPair));
+    }
 
+    private function invalidlySignedHeader(string $hash, ?KeyPair $signer = null): string
+    {
+        return BlossomFixtures::authHeaderWithInvalidSignature($this->authEvent($hash, $signer ?? $this->ownerKeyPair));
+    }
+
+    private function authEvent(?string $hash, KeyPair $signer): Event
+    {
         $tags = [
             Tag::fromArray([TagType::HASHTAG, 'media']),
             Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
@@ -380,21 +519,11 @@ final class OptimiseMediaTest extends TestCase
             $tags[] = Tag::fromArray([TagType::SHA256, $hash]);
         }
 
-        $event = Rumour::draft(
+        return Rumour::draft(
             $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Optimise media'),
             new TagCollection($tags),
         )->sign($signer, $this->signatureService);
-
-        return BlossomFixtures::authHeader($event);
-    }
-
-    private function withInvalidSignature(string $header): string
-    {
-        $event = NostrAuthHeaderCodec::decodeBlossom($header);
-        self::assertInstanceOf(Event::class, $event);
-
-        return BlossomFixtures::authHeaderWithInvalidSignature($event);
     }
 }

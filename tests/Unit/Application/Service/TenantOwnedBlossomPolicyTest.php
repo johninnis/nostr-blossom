@@ -38,47 +38,83 @@ final class TenantOwnedBlossomPolicyTest extends TestCase
 
     public function testAllowsTenantWhoOwnsBlob(): void
     {
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('ownsBlob')->willReturn(true);
-
-        self::assertNull($this->policy($index)->allowGet($this->tenant, $this->hash));
+        self::assertNull($this->policy($this->ownershipIndex(true))->allowGet($this->tenant, $this->hash));
     }
 
     public function testRejectsTenantWhoDoesNotOwnBlob(): void
     {
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('ownsBlob')->willReturn(false);
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy($this->ownershipIndex(false))->allowGet($this->tenant, $this->hash));
+    }
 
-        $error = $this->policy($index)->allowGet($this->tenant, $this->hash);
-
-        self::assertInstanceOf(AuthorisationFailure::class, $error);
-        self::assertSame('Authenticated pubkey may only access its own blobs', $error->getMessage());
+    public function testExplainsThatATenantMayOnlyAccessItsOwnBlobs(): void
+    {
+        self::assertSame('Authenticated pubkey may only access its own blobs', $this->policy($this->ownershipIndex(false))->allowGet($this->tenant, $this->hash)?->getMessage());
     }
 
     public function testRejectsStrangerBeforeOwnershipCheck(): void
     {
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy($this->createStub(BlobIndexInterface::class))->allowGet($this->stranger, $this->hash));
+    }
+
+    public function testExplainsThatAStrangerIsNotATenant(): void
+    {
+        self::assertSame('Pubkey is not an authorised tenant', $this->policy($this->createStub(BlobIndexInterface::class))->allowGet($this->stranger, $this->hash)?->getMessage());
+    }
+
+    public function testNeverChecksOwnershipForAStranger(): void
+    {
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::never())->method('ownsBlob');
 
-        $error = $this->policy($index)->allowGet($this->stranger, $this->hash);
-
-        self::assertInstanceOf(AuthorisationFailure::class, $error);
-        self::assertSame('Pubkey is not an authorised tenant', $error->getMessage());
+        $this->policy($index)->allowGet($this->stranger, $this->hash);
     }
 
-    public function testDelegatesWriteVerbsToTenantPolicy(): void
+    public function testDelegatesTenantUploadToTenantPolicy(): void
     {
-        $policy = $this->policy($this->createStub(BlobIndexInterface::class));
+        self::assertNull($this->policy($this->createStub(BlobIndexInterface::class))->allowUpload($this->tenant));
+    }
 
-        self::assertNull($policy->allowUpload($this->tenant));
-        self::assertNull($policy->allowMedia($this->tenant));
-        self::assertNull($policy->allowList($this->tenant, $this->tenant));
-        self::assertNull($policy->allowDelete($this->tenant));
+    public function testDelegatesTenantMediaToTenantPolicy(): void
+    {
+        self::assertNull($this->policy($this->createStub(BlobIndexInterface::class))->allowMedia($this->tenant));
+    }
 
-        self::assertInstanceOf(AuthorisationFailure::class, $policy->allowUpload($this->stranger));
-        self::assertInstanceOf(AuthorisationFailure::class, $policy->allowMedia($this->stranger));
-        self::assertInstanceOf(AuthorisationFailure::class, $policy->allowList($this->stranger, $this->stranger));
-        self::assertInstanceOf(AuthorisationFailure::class, $policy->allowDelete($this->stranger));
+    public function testDelegatesTenantListToTenantPolicy(): void
+    {
+        self::assertNull($this->policy($this->createStub(BlobIndexInterface::class))->allowList($this->tenant, $this->tenant));
+    }
+
+    public function testDelegatesTenantDeleteToTenantPolicy(): void
+    {
+        self::assertNull($this->policy($this->createStub(BlobIndexInterface::class))->allowDelete($this->tenant));
+    }
+
+    public function testDelegatesStrangerUploadRefusalToTenantPolicy(): void
+    {
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy($this->createStub(BlobIndexInterface::class))->allowUpload($this->stranger));
+    }
+
+    public function testDelegatesStrangerMediaRefusalToTenantPolicy(): void
+    {
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy($this->createStub(BlobIndexInterface::class))->allowMedia($this->stranger));
+    }
+
+    public function testDelegatesStrangerListRefusalToTenantPolicy(): void
+    {
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy($this->createStub(BlobIndexInterface::class))->allowList($this->stranger, $this->stranger));
+    }
+
+    public function testDelegatesStrangerDeleteRefusalToTenantPolicy(): void
+    {
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy($this->createStub(BlobIndexInterface::class))->allowDelete($this->stranger));
+    }
+
+    private function ownershipIndex(bool $owns): BlobIndexInterface
+    {
+        $index = $this->createStub(BlobIndexInterface::class);
+        $index->method('ownsBlob')->willReturn($owns);
+
+        return $index;
     }
 
     private function policy(BlobIndexInterface $index): TenantOwnedBlossomPolicy

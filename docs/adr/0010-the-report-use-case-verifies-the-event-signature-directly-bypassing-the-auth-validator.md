@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Every other authenticated path in this package runs the same sequence: `BlossomAuthValidator` parses a kind-24242 authorisation event, a `BlossomPolicyInterface` admits the actor, then the signature is verified (ADR-0003). `ReportBlobUseCase` (BUD-09) does not. It takes a raw JSON body, parses it as a kind-1984 reporting event, checks the event names at least one blob (an `x` tag), verifies the event's own signature, and persists the report.
+Every other authenticated path in this package runs the same sequence: `BlossomAuthValidator` parses a kind-24242 authorisation event, the signature is verified, then a `BlossomPolicyInterface` admits the actor (ADR-0026). `ReportBlobUseCase` (BUD-09) does not. It takes a raw JSON body, parses it as a kind-1984 reporting event, checks the event names at least one blob (an `x` tag), verifies the event's own signature, and persists the report.
 
 A reader expecting the uniform pipeline will see this as an inconsistency to "fix" by routing the report through `BlossomAuthValidator` and a policy. That would be wrong, because a report is a different kind of request:
 
@@ -22,5 +22,6 @@ What the report *does* need is proof the reporting event is genuinely signed by 
 ## Consequences
 
 - The report path is honest about what it is: a self-signed kind-1984 event with no auth envelope and no tenancy gate. Forcing it through the kind-24242 validator or a policy would either fail (no envelope to parse) or add a tenancy check BUD-09 does not want.
-- The cheap-checks-before-signature ordering of ADR-0003 still holds in spirit: kind and blob-tag checks run before the secp256k1 verification, so a malformed or blob-less report is rejected without paying the curve operation.
+- ADR-0026's ordering, every check blind to the key before the signature, holds here too: kind and blob-tag checks run before the secp256k1 verification, so a malformed or blob-less report is rejected without paying the curve operation.
 - A future reader must not "unify" the report path onto `BlossomAuthValidator`/`BlossomPolicyInterface`. The difference is intrinsic to BUD-09, not an oversight, and is pinned by the report use-case tests.
+- Shared decision: nostr-adrs ADR-0066.

@@ -14,38 +14,62 @@ final class AllowedMimeTypesTest extends TestCase
 {
     public function testContainsListedType(): void
     {
-        $allowed = new AllowedMimeTypes([BlossomFixtures::mimeType('image/png'), BlossomFixtures::mimeType('image/jpeg')]);
+        self::assertTrue($this->pngAndJpeg()->contains(BlossomFixtures::mimeType('image/png')));
+    }
 
-        self::assertTrue($allowed->contains(BlossomFixtures::mimeType('image/png')));
-        self::assertTrue($allowed->contains(BlossomFixtures::mimeType('image/jpeg')));
-        self::assertFalse($allowed->contains(BlossomFixtures::mimeType('video/mp4')));
+    public function testContainsEachListedType(): void
+    {
+        self::assertTrue($this->pngAndJpeg()->contains(BlossomFixtures::mimeType('image/jpeg')));
+    }
+
+    public function testDoesNotContainAnUnlistedType(): void
+    {
+        self::assertFalse($this->pngAndJpeg()->contains(BlossomFixtures::mimeType('video/mp4')));
     }
 
     public function testMembershipUsesNormalisedType(): void
     {
-        $allowed = new AllowedMimeTypes([BlossomFixtures::mimeType('Image/PNG')]);
-
-        self::assertTrue($allowed->contains(BlossomFixtures::mimeType('image/png')));
-        self::assertTrue($allowed->contains(BlossomFixtures::mimeType('IMAGE/PNG')));
-        self::assertSame(['image/png'], $this->stringValues($allowed));
+        self::assertTrue($this->mixedCasePng()->contains(BlossomFixtures::mimeType('image/png')));
     }
 
-    public function testIsCountableAndIterable(): void
+    public function testMembershipIgnoresTheQueriedTypesCase(): void
     {
-        $allowed = new AllowedMimeTypes([BlossomFixtures::mimeType('image/png'), BlossomFixtures::mimeType('image/jpeg')]);
+        self::assertTrue($this->mixedCasePng()->contains(BlossomFixtures::mimeType('IMAGE/PNG')));
+    }
 
-        self::assertCount(2, $allowed);
-        self::assertContainsOnlyInstancesOf(MimeType::class, $allowed);
-        self::assertSame(['image/png', 'image/jpeg'], $this->stringValues($allowed));
+    public function testHoldsTheNormalisedType(): void
+    {
+        self::assertSame(['image/png'], $this->stringValues($this->mixedCasePng()));
+    }
+
+    public function testIsCountable(): void
+    {
+        self::assertCount(2, $this->pngAndJpeg());
+    }
+
+    public function testIteratesMimeTypes(): void
+    {
+        self::assertContainsOnlyInstancesOf(MimeType::class, $this->pngAndJpeg());
+    }
+
+    public function testKeepsTheListedOrder(): void
+    {
+        self::assertSame(['image/png', 'image/jpeg'], $this->stringValues($this->pngAndJpeg()));
     }
 
     public function testAllowsEmptySet(): void
     {
-        $allowed = new AllowedMimeTypes([]);
+        self::assertTrue(new AllowedMimeTypes([])->isEmpty());
+    }
 
-        self::assertTrue($allowed->isEmpty());
-        self::assertSame([], $allowed->toArray());
-        self::assertFalse($allowed->contains(BlossomFixtures::mimeType('image/png')));
+    public function testAnEmptySetHoldsNoType(): void
+    {
+        self::assertSame([], new AllowedMimeTypes([])->toArray());
+    }
+
+    public function testAnEmptySetContainsNoType(): void
+    {
+        self::assertFalse(new AllowedMimeTypes([])->contains(BlossomFixtures::mimeType('image/png')));
     }
 
     public function testRejectsNonMimeTypeMember(): void
@@ -53,6 +77,16 @@ final class AllowedMimeTypesTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         new AllowedMimeTypes([BlossomFixtures::mimeType('image/png'), 'image/jpeg']);
+    }
+
+    private function pngAndJpeg(): AllowedMimeTypes
+    {
+        return new AllowedMimeTypes([BlossomFixtures::mimeType('image/png'), BlossomFixtures::mimeType('image/jpeg')]);
+    }
+
+    private function mixedCasePng(): AllowedMimeTypes
+    {
+        return new AllowedMimeTypes([BlossomFixtures::mimeType('Image/PNG')]);
     }
 
     /**

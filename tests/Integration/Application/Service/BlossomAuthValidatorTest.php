@@ -22,6 +22,7 @@ use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\TagType;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
 use Innis\Nostr\Core\Infrastructure\Crypto\Secp256k1Signer;
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 
 final class BlossomAuthValidatorTest extends TestCase
@@ -51,16 +52,14 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $result = $this->validator->parse(BlossomVerb::Upload, 'Bearer abc123');
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Malformed Nostr authorization', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::malformedHeader(), $result);
     }
 
     public function testRejectsInvalidBase64(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, 'Nostr !!!invalid!!!');
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization header is not valid base64', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::invalidEncoding(), $result);
     }
 
     public function testAcceptsTheBud11UnpaddedBase64UrlHeader(): void
@@ -81,16 +80,14 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $result = $this->validator->parse(BlossomVerb::Upload, 'Nostr -_8=');
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization header is not valid base64', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::invalidEncoding(), $result);
     }
 
     public function testRejectsInvalidJson(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, BlossomFixtures::authHeaderCarrying('not json'));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization header is not valid JSON', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::invalidJson(), $result);
     }
 
     public function testAcceptsValidEvent(): void
@@ -113,17 +110,12 @@ final class BlossomAuthValidatorTest extends TestCase
         $event = $this->signedAuthEvent($this->ownerKeyPair, 'upload');
         $header = BlossomFixtures::authHeaderWithInvalidSignature($event);
 
-        $parsed = $this->validator->parse(BlossomVerb::Upload, $header);
-        self::assertInstanceOf(Event::class, $parsed);
-        self::assertInstanceOf(AuthenticationFailure::class, $this->validator->verify($parsed));
+        self::assertInstanceOf(AuthenticationFailure::class, $this->validator->verify($this->parsed(BlossomVerb::Upload, $header)));
     }
 
     public function testVerifyAcceptsValidSignature(): void
     {
-        $parsed = $this->validator->parse(BlossomVerb::Upload, $this->header('upload'));
-
-        self::assertInstanceOf(Event::class, $parsed);
-        self::assertNull($this->validator->verify($parsed));
+        self::assertNull($this->validator->verify($this->parsed(BlossomVerb::Upload, $this->header('upload'))));
     }
 
     public function testRejectsWrongKind(): void
@@ -141,8 +133,7 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', time() - 3600));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event has expired', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::expired(), $result);
     }
 
     public function testRejectsMissingExpirationTag(): void
@@ -151,8 +142,7 @@ final class BlossomAuthValidatorTest extends TestCase
             Tag::fromArray([TagType::HASHTAG, 'upload']),
         ));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event is missing an expiration tag', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::missingExpiration(), $result);
     }
 
     public function testRejectsTokenWhoseSecondExpirationHasPassed(): void
@@ -163,8 +153,7 @@ final class BlossomAuthValidatorTest extends TestCase
             Tag::fromArray([TagType::EXPIRATION, (string) (time() - 3600)]),
         ));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event has expired', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::expired(), $result);
     }
 
     public function testExpiryVerdictIsIndependentOfExpirationTagOrder(): void
@@ -175,8 +164,7 @@ final class BlossomAuthValidatorTest extends TestCase
             Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event has expired', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::expired(), $result);
     }
 
     public function testRejectsTokenNamingMoreThanOneVerb(): void
@@ -187,8 +175,7 @@ final class BlossomAuthValidatorTest extends TestCase
             Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
         ));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event must name exactly one verb, got "upload", "delete"', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::ambiguousVerb(['upload', 'delete']), $result);
     }
 
     public function testVerbRefusalIsIndependentOfHashtagTagOrder(): void
@@ -213,12 +200,33 @@ final class BlossomAuthValidatorTest extends TestCase
         self::assertInstanceOf(Event::class, $result);
     }
 
+    public function testRejectsTokenWhoseVerbTagsDisagreeOnAnEmptyValue(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::HASHTAG, '']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+        ));
+
+        self::assertEquals(AuthenticationFailure::ambiguousVerb(['upload', '']), $result);
+    }
+
+    public function testAcceptsTokenNamingOneVerbInTwoCases(): void
+    {
+        $result = $this->validator->parse(BlossomVerb::Upload, $this->headerForTags(
+            Tag::fromArray([TagType::HASHTAG, 'upload']),
+            Tag::fromArray([TagType::HASHTAG, 'UPLOAD']),
+            Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
+        ));
+
+        self::assertInstanceOf(Event::class, $result);
+    }
+
     public function testRejectsNegativeExpirationWithoutThrowing(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', -5));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event has an invalid expiration tag', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::invalidExpiration(), $result);
     }
 
     public function testRejectsNonNumericExpiration(): void
@@ -228,8 +236,7 @@ final class BlossomAuthValidatorTest extends TestCase
             Tag::fromArray([TagType::EXPIRATION, 'soon']),
         ));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event has an invalid expiration tag', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::invalidExpiration(), $result);
     }
 
     public function testRejectsTokenWhoseSecondExpirationIsUnparseable(): void
@@ -240,24 +247,21 @@ final class BlossomAuthValidatorTest extends TestCase
             Tag::fromArray([TagType::EXPIRATION, 'soon']),
         ));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event has an invalid expiration tag', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::invalidExpiration(), $result);
     }
 
     public function testRejectsCreatedAtTooFarInTheFuture(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now + 7200));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event created_at is too far from the current time', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::unreasonableCreatedAt(), $result);
     }
 
     public function testRejectsCreatedAtTooFarInThePast(): void
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', createdAt: $this->now - (11 * 365 * 24 * 3600)));
 
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
-        self::assertSame('Authorization event created_at is too far from the current time', $result->getMessage());
+        self::assertEquals(AuthenticationFailure::unreasonableCreatedAt(), $result);
     }
 
     public function testToleratesCreatedAtUpToSixtySecondsAheadOfTheServerClock(): void
@@ -302,29 +306,26 @@ final class BlossomAuthValidatorTest extends TestCase
     public function testAuthorisesMatchingHashTag(): void
     {
         $hash = BlossomFixtures::blobHash(hash('sha256', 'blob content'));
-        $result = $this->validator->parse(BlossomVerb::Delete, $this->header('delete', null, $hash->toHex()));
+        $event = $this->parsed(BlossomVerb::Delete, $this->header('delete', null, $hash->toHex()));
 
-        self::assertInstanceOf(Event::class, $result);
-        self::assertNull($this->validator->requireAuthorisedBlob($result, $hash));
+        self::assertNull($this->validator->requireAuthorisedBlob($event, $hash));
     }
 
     public function testDoesNotAuthoriseMismatchedHashTag(): void
     {
         $expected = BlossomFixtures::blobHash(hash('sha256', 'correct'));
         $wrong = hash('sha256', 'wrong');
-        $result = $this->validator->parse(BlossomVerb::Delete, $this->header('delete', null, $wrong));
+        $event = $this->parsed(BlossomVerb::Delete, $this->header('delete', null, $wrong));
 
-        self::assertInstanceOf(Event::class, $result);
-        self::assertInstanceOf(AuthorisationFailure::class, $this->validator->requireAuthorisedBlob($result, $expected));
+        self::assertInstanceOf(AuthorisationFailure::class, $this->validator->requireAuthorisedBlob($event, $expected));
     }
 
     public function testDoesNotAuthoriseWhenHashTagMissing(): void
     {
         $expected = BlossomFixtures::blobHash(hash('sha256', 'expected'));
-        $result = $this->validator->parse(BlossomVerb::Delete, $this->header('delete'));
+        $event = $this->parsed(BlossomVerb::Delete, $this->header('delete'));
 
-        self::assertInstanceOf(Event::class, $result);
-        self::assertInstanceOf(AuthorisationFailure::class, $this->validator->requireAuthorisedBlob($result, $expected));
+        self::assertInstanceOf(AuthorisationFailure::class, $this->validator->requireAuthorisedBlob($event, $expected));
     }
 
     public function testAcceptsTokenScopedToThisServer(): void
@@ -352,35 +353,31 @@ final class BlossomAuthValidatorTest extends TestCase
     {
         $result = $this->validator->parse(BlossomVerb::Upload, $this->header('upload', servers: ['other.example']));
 
-        self::assertInstanceOf(AuthorisationFailure::class, $result);
-        self::assertSame('Authorization event does not authorise this server', $result->getMessage());
+        self::assertEquals(AuthorisationFailure::serverNotAuthorised(), $result);
     }
 
     public function testScopeAdmitsBlobWhenTokenNamesNoBlob(): void
     {
         $hash = BlossomFixtures::blobHash(hash('sha256', 'any blob'));
-        $result = $this->validator->parse(BlossomVerb::Get, $this->header('get'));
+        $event = $this->parsed(BlossomVerb::Get, $this->header('get'));
 
-        self::assertInstanceOf(Event::class, $result);
-        self::assertNull($this->validator->requireBlobInScope($result, $hash));
+        self::assertNull($this->validator->requireBlobInScope($event, $hash));
     }
 
     public function testScopeAdmitsBlobNamedByTheToken(): void
     {
         $hash = BlossomFixtures::blobHash(hash('sha256', 'scoped blob'));
-        $result = $this->validator->parse(BlossomVerb::Get, $this->header('get', xHash: $hash->toHex()));
+        $event = $this->parsed(BlossomVerb::Get, $this->header('get', xHash: $hash->toHex()));
 
-        self::assertInstanceOf(Event::class, $result);
-        self::assertNull($this->validator->requireBlobInScope($result, $hash));
+        self::assertNull($this->validator->requireBlobInScope($event, $hash));
     }
 
     public function testScopeRejectsBlobTheTokenDoesNotName(): void
     {
         $requested = BlossomFixtures::blobHash(hash('sha256', 'requested'));
-        $result = $this->validator->parse(BlossomVerb::Get, $this->header('get', xHash: hash('sha256', 'other')));
+        $event = $this->parsed(BlossomVerb::Get, $this->header('get', xHash: hash('sha256', 'other')));
 
-        self::assertInstanceOf(Event::class, $result);
-        self::assertInstanceOf(AuthorisationFailure::class, $this->validator->requireBlobInScope($result, $requested));
+        self::assertInstanceOf(AuthorisationFailure::class, $this->validator->requireBlobInScope($event, $requested));
     }
 
     public function testRejectsEmptyHeaderAsMissing(): void
@@ -388,6 +385,13 @@ final class BlossomAuthValidatorTest extends TestCase
         $result = $this->validator->parse(BlossomVerb::Upload, '');
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    private function parsed(BlossomVerb $verb, string $header): Event
+    {
+        $result = $this->validator->parse($verb, $header);
+
+        return $result instanceof Event ? $result : throw new InvalidArgumentException(sprintf('the authorization header does not parse: %s', $result->getMessage()));
     }
 
     private function headerForTags(Tag ...$tags): string

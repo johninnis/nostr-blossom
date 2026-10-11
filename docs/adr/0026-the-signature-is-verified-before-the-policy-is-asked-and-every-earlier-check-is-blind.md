@@ -35,3 +35,4 @@ Concretely: upload, mirror and optimise run parse → `verify` → policy → st
 - Failure precedence at the margins is as ADR-0019 left it: an invalidly signed pre-flight declaring an oversize blob is refused as too large (413), not as unauthenticated. That refusal is computed from the caller's own declaration and the advertised limit, so it discloses nothing about the key.
 - The ingest paths' binding against the staged or fetched bytes still follows verification, because the hash does not exist until the bytes do; that is I/O sequencing, not an exception.
 - A future reader must not move the policy back ahead of `verify()` to save the curve operation, and must not move any check whose answer depends on the key ahead of it.
+- Shared decision: nostr-adrs ADR-0028.

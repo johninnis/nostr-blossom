@@ -25,27 +25,47 @@ use PHPUnit\Framework\TestCase;
 final class BlossomFailureCategoryTest extends TestCase
 {
     /**
-     * @return iterable<string, array{BlossomFailure, BlossomFailureCategory, int}>
+     * @return iterable<string, array{BlossomFailure, BlossomFailureCategory}>
      */
     public static function errorCategories(): iterable
     {
-        yield 'authentication' => [AuthenticationFailure::missingHeader(), BlossomFailureCategory::Authentication, 401];
-        yield 'authorisation' => [AuthorisationFailure::notTenant(), BlossomFailureCategory::Authorisation, 403];
-        yield 'not found' => [BlobNotFoundFailure::forHash('abc'), BlossomFailureCategory::NotFound, 404];
-        yield 'too large' => [BlobTooLargeFailure::forSize(2, 1), BlossomFailureCategory::PayloadTooLarge, 413];
-        yield 'too large beyond the cap' => [BlobTooLargeFailure::beyondMaximum(1), BlossomFailureCategory::PayloadTooLarge, 413];
-        yield 'unsupported type' => [UnsupportedMimeTypeFailure::forType(MimeType::fromString('text/plain')), BlossomFailureCategory::UnsupportedMediaType, 415];
-        yield 'integrity' => [BlobIntegrityFailure::declaredHashMismatch('a', 'b'), BlossomFailureCategory::MalformedRequest, 400];
-        yield 'read' => [BlobReadFailure::unreadable(), BlossomFailureCategory::Internal, 500];
-        yield 'report' => [BlobReportFailure::malformedEvent(), BlossomFailureCategory::MalformedRequest, 400];
-        yield 'optimisation' => [MediaOptimisationFailure::failed(MimeType::fromString('image/png')), BlossomFailureCategory::Internal, 500];
-        yield 'remote fetch' => [RemoteFetchFailure::forUrl(HttpUrl::tryFromString('https://remote.test') ?? throw new LogicException('test url')), BlossomFailureCategory::UpstreamFailure, 502];
+        yield 'authentication' => [AuthenticationFailure::missingHeader(), BlossomFailureCategory::Authentication];
+        yield 'authorisation' => [AuthorisationFailure::notTenant(), BlossomFailureCategory::Authorisation];
+        yield 'not found' => [BlobNotFoundFailure::forHash('abc'), BlossomFailureCategory::NotFound];
+        yield 'too large' => [BlobTooLargeFailure::forSize(2, 1), BlossomFailureCategory::PayloadTooLarge];
+        yield 'too large beyond the cap' => [BlobTooLargeFailure::beyondMaximum(1), BlossomFailureCategory::PayloadTooLarge];
+        yield 'unsupported type' => [UnsupportedMimeTypeFailure::forType(MimeType::fromString('text/plain')), BlossomFailureCategory::UnsupportedMediaType];
+        yield 'integrity' => [BlobIntegrityFailure::declaredHashMismatch('a', 'b'), BlossomFailureCategory::MalformedRequest];
+        yield 'read' => [BlobReadFailure::unreadable(), BlossomFailureCategory::Internal];
+        yield 'report' => [BlobReportFailure::malformedEvent(), BlossomFailureCategory::MalformedRequest];
+        yield 'optimisation' => [MediaOptimisationFailure::failed(MimeType::fromString('image/png')), BlossomFailureCategory::Internal];
+        yield 'remote fetch' => [RemoteFetchFailure::forUrl(HttpUrl::tryFromString('https://remote.test') ?? throw new LogicException('test url')), BlossomFailureCategory::UpstreamFailure];
+    }
+
+    /**
+     * @return iterable<string, array{BlossomFailureCategory, int}>
+     */
+    public static function categoryStatuses(): iterable
+    {
+        yield 'authentication' => [BlossomFailureCategory::Authentication, 401];
+        yield 'authorisation' => [BlossomFailureCategory::Authorisation, 403];
+        yield 'not found' => [BlossomFailureCategory::NotFound, 404];
+        yield 'payload too large' => [BlossomFailureCategory::PayloadTooLarge, 413];
+        yield 'unsupported media type' => [BlossomFailureCategory::UnsupportedMediaType, 415];
+        yield 'malformed request' => [BlossomFailureCategory::MalformedRequest, 400];
+        yield 'upstream failure' => [BlossomFailureCategory::UpstreamFailure, 502];
+        yield 'internal' => [BlossomFailureCategory::Internal, 500];
     }
 
     #[DataProvider('errorCategories')]
-    public function testErrorExposesCategoryAndHttpStatus(BlossomFailure $error, BlossomFailureCategory $category, int $status): void
+    public function testErrorExposesItsCategory(BlossomFailure $error, BlossomFailureCategory $category): void
     {
         self::assertSame($category, $error->category());
-        self::assertSame($status, $error->category()->httpStatus());
+    }
+
+    #[DataProvider('categoryStatuses')]
+    public function testCategoryExposesItsHttpStatus(BlossomFailureCategory $category, int $status): void
+    {
+        self::assertSame($status, $category->httpStatus());
     }
 }

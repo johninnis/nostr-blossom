@@ -18,13 +18,23 @@ final class DeclaredBlobTest extends TestCase
         new DeclaredBlob(BlossomFixtures::blobHash(hash('sha256', 'a')), -1, BlossomFixtures::mimeType('image/png'));
     }
 
-    public function testExposesTheDeclaredTriple(): void
+    public function testExposesTheDeclaredHash(): void
     {
-        $hash = BlossomFixtures::blobHash(hash('sha256', 'a'));
-        $declared = new DeclaredBlob($hash, 512, BlossomFixtures::mimeType('image/png'));
+        self::assertTrue($this->declared()->getHash()->equals(BlossomFixtures::blobHash(hash('sha256', 'a'))));
+    }
 
-        self::assertTrue($declared->getHash()->equals($hash));
-        self::assertSame(512, $declared->getSize());
-        self::assertSame('image/png', (string) $declared->getMimeType());
+    public function testExposesTheDeclaredSize(): void
+    {
+        self::assertSame(512, $this->declared()->getSize());
+    }
+
+    public function testExposesTheDeclaredMimeType(): void
+    {
+        self::assertSame('image/png', (string) $this->declared()->getMimeType());
+    }
+
+    private function declared(): DeclaredBlob
+    {
+        return new DeclaredBlob(BlossomFixtures::blobHash(hash('sha256', 'a')), 512, BlossomFixtures::mimeType('image/png'));
     }
 }

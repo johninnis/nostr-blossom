@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Innis\Nostr\Blossom\Tests\Support;
 
 use Innis\Nostr\Blossom\Domain\Collection\AllowedMimeTypes;
+use Innis\Nostr\Blossom\Domain\Failure\BlossomFailure;
+use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\HttpUrl;
 use Innis\Nostr\Blossom\Domain\ValueObject\MimeType;
@@ -20,6 +22,11 @@ use InvalidArgumentException;
 
 final class BlossomFixtures
 {
+    public static function descriptorIn(BlobDescriptor|BlossomFailure $result): BlobDescriptor
+    {
+        return $result instanceof BlobDescriptor ? $result : throw new InvalidArgumentException(sprintf('expected a blob descriptor, got a failure: %s', $result->getMessage()));
+    }
+
     public static function blobHash(string $hex): BlobHash
     {
         return BlobHash::tryFromHex($hex) ?? throw new InvalidArgumentException(sprintf('not a valid blob hash: %s', $hex));

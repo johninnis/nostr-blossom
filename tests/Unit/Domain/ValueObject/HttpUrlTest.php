@@ -6,40 +6,29 @@ namespace Innis\Nostr\Blossom\Tests\Unit\Domain\ValueObject;
 
 use Innis\Nostr\Blossom\Domain\ValueObject\HttpUrl;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class HttpUrlTest extends TestCase
 {
     public function testAcceptsAbsoluteHttpsUrl(): void
     {
-        $url = HttpUrl::tryFromString('https://blossom.example.com');
-
-        self::assertNotNull($url);
-        self::assertSame('https://blossom.example.com', (string) $url);
+        self::assertSame('https://blossom.example.com', (string) HttpUrl::tryFromString('https://blossom.example.com'));
     }
 
     public function testAcceptsAbsoluteHttpUrl(): void
     {
-        $url = HttpUrl::tryFromString('http://localhost:8080');
-
-        self::assertNotNull($url);
-        self::assertSame('http://localhost:8080', (string) $url);
+        self::assertSame('http://localhost:8080', (string) HttpUrl::tryFromString('http://localhost:8080'));
     }
 
     public function testPreservesTrailingSlash(): void
     {
-        $url = HttpUrl::tryFromString('https://blossom.example.com/blobs/');
-
-        self::assertNotNull($url);
-        self::assertSame('https://blossom.example.com/blobs/', (string) $url);
+        self::assertSame('https://blossom.example.com/blobs/', (string) HttpUrl::tryFromString('https://blossom.example.com/blobs/'));
     }
 
     public function testPreservesTrailingSlashInQueryAndFragment(): void
     {
-        $url = HttpUrl::tryFromString('https://blossom.example.com/cb?next=/foo/#top/');
-
-        self::assertNotNull($url);
-        self::assertSame('https://blossom.example.com/cb?next=/foo/#top/', (string) $url);
+        self::assertSame('https://blossom.example.com/cb?next=/foo/#top/', (string) HttpUrl::tryFromString('https://blossom.example.com/cb?next=/foo/#top/'));
     }
 
     public function testRejectsUrlWithoutScheme(): void
@@ -62,11 +51,20 @@ final class HttpUrlTest extends TestCase
         self::assertNull(HttpUrl::tryFromString(''));
     }
 
-    public function testRejectsWhitespaceInUrl(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function urlsCarryingWhitespace(): iterable
     {
-        self::assertNull(HttpUrl::tryFromString('https://blossom.example.com/a b'));
-        self::assertNull(HttpUrl::tryFromString(' https://blossom.example.com'));
-        self::assertNull(HttpUrl::tryFromString("https://blossom.example.com/x\n"));
+        yield 'a space in the path' => ['https://blossom.example.com/a b'];
+        yield 'a leading space' => [' https://blossom.example.com'];
+        yield 'a trailing newline' => ["https://blossom.example.com/x\n"];
+    }
+
+    #[DataProvider('urlsCarryingWhitespace')]
+    public function testRejectsWhitespaceInUrl(string $url): void
+    {
+        self::assertNull(HttpUrl::tryFromString($url));
     }
 
     public function testRejectsControlCharactersInUrl(): void
@@ -76,106 +74,76 @@ final class HttpUrlTest extends TestCase
 
     public function testLowercasesSchemeAndHost(): void
     {
-        $url = HttpUrl::tryFromString('HTTPS://Blossom.Example.COM/Path');
-
-        self::assertNotNull($url);
-        self::assertSame('https://blossom.example.com/Path', (string) $url);
+        self::assertSame('https://blossom.example.com/Path', (string) HttpUrl::tryFromString('HTTPS://Blossom.Example.COM/Path'));
     }
 
     public function testPreservesPort(): void
     {
-        $url = HttpUrl::tryFromString('http://localhost:8080/base');
-
-        self::assertNotNull($url);
-        self::assertSame('http://localhost:8080/base', (string) $url);
+        self::assertSame('http://localhost:8080/base', (string) HttpUrl::tryFromString('http://localhost:8080/base'));
     }
 
     public function testAppendCollapsesTheBaseTrailingSlash(): void
     {
-        $base = HttpUrl::tryFromString('https://blossom.example.com/');
-
-        self::assertNotNull($base);
-        self::assertSame('https://blossom.example.com/abc.png', (string) $base->append('abc.png'));
+        self::assertSame('https://blossom.example.com/abc.png', (string) BlossomFixtures::httpUrl('https://blossom.example.com/')->append('abc.png'));
     }
 
     public function testAppendCollapsesAPathTrailingSlash(): void
     {
-        $base = HttpUrl::tryFromString('https://blossom.example.com/blobs/');
-
-        self::assertNotNull($base);
-        self::assertSame('https://blossom.example.com/blobs/abc.png', (string) $base->append('abc.png'));
+        self::assertSame('https://blossom.example.com/blobs/abc.png', (string) BlossomFixtures::httpUrl('https://blossom.example.com/blobs/')->append('abc.png'));
     }
 
     public function testAppendIsAgnosticToLeadingSlash(): void
     {
-        $base = HttpUrl::tryFromString('https://blossom.example.com');
-
-        self::assertNotNull($base);
-        self::assertSame('https://blossom.example.com/abc.png', (string) $base->append('/abc.png'));
+        self::assertSame('https://blossom.example.com/abc.png', (string) BlossomFixtures::httpUrl('https://blossom.example.com')->append('/abc.png'));
     }
 
     public function testAppendInsertsSegmentBeforeQuery(): void
     {
-        $base = HttpUrl::tryFromString('https://blossom.example.com/blobs?v=1');
-
-        self::assertNotNull($base);
-        self::assertSame('https://blossom.example.com/blobs/abc.png?v=1', (string) $base->append('abc.png'));
+        self::assertSame('https://blossom.example.com/blobs/abc.png?v=1', (string) BlossomFixtures::httpUrl('https://blossom.example.com/blobs?v=1')->append('abc.png'));
     }
 
     public function testAppendInsertsSegmentBeforeFragment(): void
     {
-        $base = HttpUrl::tryFromString('https://blossom.example.com/blobs#section');
-
-        self::assertNotNull($base);
-        self::assertSame('https://blossom.example.com/blobs/abc.png#section', (string) $base->append('abc.png'));
+        self::assertSame('https://blossom.example.com/blobs/abc.png#section', (string) BlossomFixtures::httpUrl('https://blossom.example.com/blobs#section')->append('abc.png'));
     }
 
     public function testAppendReturnsValidatedInstance(): void
     {
-        $base = HttpUrl::tryFromString('https://blossom.example.com');
-
-        self::assertNotNull($base);
-        self::assertTrue($base->append('abc.png')->equals(BlossomFixtures::httpUrl('https://blossom.example.com/abc.png')));
+        self::assertTrue(BlossomFixtures::httpUrl('https://blossom.example.com')->append('abc.png')->equals(BlossomFixtures::httpUrl('https://blossom.example.com/abc.png')));
     }
 
-    public function testExposesSchemeHostAndPort(): void
+    public function testExposesTheNormalisedScheme(): void
     {
-        $url = HttpUrl::tryFromString('HTTPS://Blossom.Example.COM:8443/Path');
+        self::assertSame('https', BlossomFixtures::httpUrl('HTTPS://Blossom.Example.COM:8443/Path')->getScheme());
+    }
 
-        self::assertNotNull($url);
-        self::assertSame('https', $url->getScheme());
-        self::assertSame('blossom.example.com', $url->getHost());
-        self::assertSame(8443, $url->getPort());
+    public function testExposesTheNormalisedHost(): void
+    {
+        self::assertSame('blossom.example.com', BlossomFixtures::httpUrl('HTTPS://Blossom.Example.COM:8443/Path')->getHost());
+    }
+
+    public function testExposesThePort(): void
+    {
+        self::assertSame(8443, BlossomFixtures::httpUrl('HTTPS://Blossom.Example.COM:8443/Path')->getPort());
     }
 
     public function testPortIsNullWhenAbsent(): void
     {
-        $url = HttpUrl::tryFromString('https://blossom.example.com/path');
-
-        self::assertNotNull($url);
-        self::assertNull($url->getPort());
+        self::assertNull(BlossomFixtures::httpUrl('https://blossom.example.com/path')->getPort());
     }
 
     public function testEqualsComparesNormalisedValue(): void
     {
-        $mixedCase = HttpUrl::tryFromString('HTTPS://Blossom.Example.COM/path');
-        $lowerCase = HttpUrl::tryFromString('https://blossom.example.com/path');
-        $other = HttpUrl::tryFromString('https://other.example.com/path');
+        self::assertTrue(BlossomFixtures::httpUrl('HTTPS://Blossom.Example.COM/path')->equals(BlossomFixtures::httpUrl('https://blossom.example.com/path')));
+    }
 
-        self::assertNotNull($mixedCase);
-        self::assertNotNull($lowerCase);
-        self::assertNotNull($other);
-        self::assertTrue($mixedCase->equals($lowerCase));
-        self::assertFalse($mixedCase->equals($other));
+    public function testEqualsDistinguishesAnotherHost(): void
+    {
+        self::assertFalse(BlossomFixtures::httpUrl('HTTPS://Blossom.Example.COM/path')->equals(BlossomFixtures::httpUrl('https://other.example.com/path')));
     }
 
     public function testEqualsDistinguishesTrailingSlashVariants(): void
     {
-        $withSlash = HttpUrl::tryFromString('https://blossom.example.com/blobs/');
-        $withoutSlash = HttpUrl::tryFromString('https://blossom.example.com/blobs');
-
-        self::assertNotNull($withSlash);
-        self::assertNotNull($withoutSlash);
-        self::assertFalse($withSlash->equals($withoutSlash));
+        self::assertFalse(BlossomFixtures::httpUrl('https://blossom.example.com/blobs/')->equals(BlossomFixtures::httpUrl('https://blossom.example.com/blobs')));
     }
 }

@@ -33,7 +33,6 @@ use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
-use Innis\Nostr\Core\Domain\ValueObject\Content\FileMetadata;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\KeyPair;
 use Innis\Nostr\Core\Domain\ValueObject\Protocol\Rumour;
 use Innis\Nostr\Core\Domain\ValueObject\Tag\Tag;
@@ -62,45 +61,49 @@ final class UploadBlobTest extends TestCase
         $this->authValidator = new BlossomAuthValidator($this->signatureService, $this->clock(), $this->config->getIdentity());
     }
 
-    public function testSuccessfulUpload(): void
+    public function testSuccessfulUploadStoresTheBlob(): void
     {
-        $content = 'test image data';
-        $hash = hash('sha256', $content);
-        $authHeader = $this->buildAuthHeader('upload', $hash);
-
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('store');
 
+        $this->uploadAuthorisedBlob($store, $this->createStub(BlobIndexInterface::class));
+    }
+
+    public function testSuccessfulUploadIndexesTheBlob(): void
+    {
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::once())->method('save');
 
-        $upload = $this->useCase($store, $index, $this->inspector($hash, strlen($content)), $this->config);
-        $result = $upload->execute($authHeader, $this->source('/tmp/upload', 'image/png'), null);
-
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        self::assertSame($hash, $result->getSha256()->toHex());
-        self::assertNull($result->getNip94());
+        $this->uploadAuthorisedBlob($this->createStub(BlobStoreInterface::class), $index);
     }
 
-    public function testUploadCarriesNip94WhenInspectorReportsMedia(): void
+    public function testSuccessfulUploadDescribesTheBlobByItsHash(): void
     {
-        $content = 'test image data';
-        $hash = hash('sha256', $content);
-        $authHeader = $this->buildAuthHeader('upload', $hash);
+        $result = $this->uploadAuthorisedBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
 
-        $media = new MediaMetadata(dimensions: '640x480', blurhash: 'LEHV6nWB2yk8');
-        $store = $this->createStub(BlobStoreInterface::class);
-        $index = $this->createStub(BlobIndexInterface::class);
+        self::assertSame(hash('sha256', 'test image data'), BlossomFixtures::descriptorIn($result)->getSha256()->toHex());
+    }
 
-        $upload = $this->useCase($store, $index, $this->inspector($hash, strlen($content), $media), $this->config);
-        $result = $upload->execute($authHeader, $this->source('/tmp/upload', 'image/png'), null);
+    public function testUploadCarriesNoNip94WhenInspectorReportsNoMedia(): void
+    {
+        $result = $this->uploadAuthorisedBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
 
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        $nip94 = $result->getNip94();
-        self::assertInstanceOf(FileMetadata::class, $nip94);
-        self::assertSame('640x480', $nip94->getDimensions());
-        self::assertSame('LEHV6nWB2yk8', $nip94->getBlurhash());
-        self::assertSame($hash, $nip94->getHash());
+        self::assertNull(BlossomFixtures::descriptorIn($result)->getNip94());
+    }
+
+    public function testUploadCarriesTheInspectedDimensionsInItsNip94(): void
+    {
+        self::assertSame('640x480', BlossomFixtures::descriptorIn($this->uploadWithMedia())->getNip94()?->getDimensions());
+    }
+
+    public function testUploadCarriesTheInspectedBlurhashInItsNip94(): void
+    {
+        self::assertSame('LEHV6nWB2yk8', BlossomFixtures::descriptorIn($this->uploadWithMedia())->getNip94()?->getBlurhash());
+    }
+
+    public function testUploadCarriesTheBlobHashInItsNip94(): void
+    {
+        self::assertSame(hash('sha256', 'test image data'), BlossomFixtures::descriptorIn($this->uploadWithMedia())->getNip94()?->getHash());
     }
 
     public function testRejectsUnsupportedMimeType(): void
@@ -116,34 +119,22 @@ final class UploadBlobTest extends TestCase
 
     public function testDetectedMimeTypeOverridesDeclaredType(): void
     {
-        $content = 'actually a jpeg';
-        $hash = hash('sha256', $content);
-        $authHeader = $this->buildAuthHeader('upload', $hash);
+        self::assertSame('image/jpeg', (string) BlossomFixtures::descriptorIn($this->uploadDeclaredAsPng('actually a jpeg', 'image/jpeg'))->getType());
+    }
 
-        $store = $this->createStub(BlobStoreInterface::class);
-        $index = $this->createStub(BlobIndexInterface::class);
-        $upload = $this->useCase($store, $index, $this->inspector($hash, strlen($content), null, 'image/jpeg'), $this->config);
-        $result = $upload->execute($authHeader, $this->source('/tmp/upload', 'image/png'), null);
-
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        self::assertSame('image/jpeg', (string) $result->getType());
-        self::assertStringEndsWith('.jpg', (string) $result->getUrl());
+    public function testDetectedMimeTypeDecidesTheUrlExtension(): void
+    {
+        self::assertStringEndsWith('.jpg', (string) BlossomFixtures::descriptorIn($this->uploadDeclaredAsPng('actually a jpeg', 'image/jpeg'))->getUrl());
     }
 
     public function testFallsBackToDeclaredTypeWhenDetectionIsGeneric(): void
     {
-        $content = 'opaque bytes';
-        $hash = hash('sha256', $content);
-        $authHeader = $this->buildAuthHeader('upload', $hash);
+        self::assertSame('image/png', (string) BlossomFixtures::descriptorIn($this->uploadDeclaredAsPng('opaque bytes', 'application/octet-stream'))->getType());
+    }
 
-        $store = $this->createStub(BlobStoreInterface::class);
-        $index = $this->createStub(BlobIndexInterface::class);
-        $upload = $this->useCase($store, $index, $this->inspector($hash, strlen($content), null, 'application/octet-stream'), $this->config);
-        $result = $upload->execute($authHeader, $this->source('/tmp/upload', 'image/png'), null);
-
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        self::assertSame('image/png', (string) $result->getType());
-        self::assertStringEndsWith('.png', (string) $result->getUrl());
+    public function testFallsBackToDeclaredExtensionWhenDetectionIsGeneric(): void
+    {
+        self::assertStringEndsWith('.png', (string) BlossomFixtures::descriptorIn($this->uploadDeclaredAsPng('opaque bytes', 'application/octet-stream'))->getUrl());
     }
 
     public function testRejectsWhenDetectedTypeIsDisallowedDespiteAllowedDeclaration(): void
@@ -244,33 +235,80 @@ final class UploadBlobTest extends TestCase
         self::assertInstanceOf(AuthorisationFailure::class, $result);
     }
 
+    public function testRejectsMissingAuth(): void
+    {
+        $upload = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->config);
+
+        self::assertInstanceOf(BlossomFailure::class, $upload->execute('', $this->createStub(PendingBlobSourceInterface::class), null));
+    }
+
     public function testDoesNotStageBodyWhenAuthIsMissing(): void
     {
-        $store = $this->createStub(BlobStoreInterface::class);
-        $upload = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->config);
-
         $source = $this->createMock(PendingBlobSourceInterface::class);
         $source->expects(self::never())->method('stage');
 
-        $result = $upload->execute('', $source, null);
-
-        self::assertInstanceOf(BlossomFailure::class, $result);
+        $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->config)
+            ->execute('', $source, null);
     }
 
-    public function testReturnsTheSourceFailureWithoutIngesting(): void
+    public function testReturnsTheSourceFailure(): void
     {
         $tooLarge = BlobTooLargeFailure::beyondMaximum(1024);
-        $source = $this->createStub(PendingBlobSourceInterface::class);
-        $source->method('stage')->willReturn($tooLarge);
 
+        self::assertSame($tooLarge, $this->uploadFromFailingSource($tooLarge, $this->createStub(BlobStoreInterface::class)));
+    }
+
+    public function testDoesNotStoreWhenTheSourceFails(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
+
+        $this->uploadFromFailingSource(BlobTooLargeFailure::beyondMaximum(1024), $store);
+    }
+
+    public function testDoesNotDiscardWhenTheSourceFails(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('discard');
 
-        $upload = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->config);
-        $result = $upload->execute($this->buildAuthHeader('upload'), $source, null);
+        $this->uploadFromFailingSource(BlobTooLargeFailure::beyondMaximum(1024), $store);
+    }
 
-        self::assertSame($tooLarge, $result);
+    private function uploadAuthorisedBlob(BlobStoreInterface $store, BlobIndexInterface $index): BlobDescriptor|BlossomFailure
+    {
+        $content = 'test image data';
+        $hash = hash('sha256', $content);
+
+        return $this->useCase($store, $index, $this->inspector($hash, strlen($content)), $this->config)
+            ->execute($this->buildAuthHeader('upload', $hash), $this->source('/tmp/upload', 'image/png'), null);
+    }
+
+    private function uploadWithMedia(): BlobDescriptor|BlossomFailure
+    {
+        $content = 'test image data';
+        $hash = hash('sha256', $content);
+        $inspector = $this->inspector($hash, strlen($content), new MediaMetadata(dimensions: '640x480', blurhash: 'LEHV6nWB2yk8'));
+
+        return $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $inspector, $this->config)
+            ->execute($this->buildAuthHeader('upload', $hash), $this->source('/tmp/upload', 'image/png'), null);
+    }
+
+    private function uploadDeclaredAsPng(string $content, string $detectedMimeType): BlobDescriptor|BlossomFailure
+    {
+        $hash = hash('sha256', $content);
+        $inspector = $this->inspector($hash, strlen($content), null, $detectedMimeType);
+
+        return $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $inspector, $this->config)
+            ->execute($this->buildAuthHeader('upload', $hash), $this->source('/tmp/upload', 'image/png'), null);
+    }
+
+    private function uploadFromFailingSource(BlossomFailure $sourceFailure, BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        $source = $this->createStub(PendingBlobSourceInterface::class);
+        $source->method('stage')->willReturn($sourceFailure);
+
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->config)
+            ->execute($this->buildAuthHeader('upload'), $source, null);
     }
 
     private function useCase(BlobStoreInterface $store, BlobIndexInterface $index, BlobInspectorInterface $inspector, ServerConfig $config): UploadBlobUseCase

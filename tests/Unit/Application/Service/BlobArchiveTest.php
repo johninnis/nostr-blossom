@@ -11,10 +11,10 @@ use Innis\Nostr\Blossom\Application\Service\BlobArchive;
 use Innis\Nostr\Blossom\Domain\Failure\BlobNotFoundFailure;
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
+use Innis\Nostr\Blossom\Tests\Support\TestDoubleException;
 use Innis\Nostr\Core\Domain\ValueObject\Identity\PublicKey;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
 use PHPUnit\Framework\TestCase;
-use RuntimeException;
 
 final class BlobArchiveTest extends TestCase
 {
@@ -50,37 +50,49 @@ final class BlobArchiveTest extends TestCase
         new BlobArchive($store, $this->createStub(BlobIndexInterface::class))->store($this->tenant(), '/tmp/upload', $descriptor);
     }
 
-    public function testIndexFaultReleasesBytesNoTenantIndexesAndPropagates(): void
+    public function testIndexFaultReleasesBytesNoTenantIndexes(): void
     {
         $descriptor = $this->descriptor(hash('sha256', 'orphan'));
-        $fault = new RuntimeException('index unavailable');
-
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('save')->willThrowException($fault);
-        $index->method('findByHash')->willReturn(null);
 
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('delete')->with($descriptor->getSha256());
 
+        try {
+            new BlobArchive($store, $this->indexFailingToSave(new TestDoubleException('index unavailable'), null))->store($this->tenant(), '/tmp/upload', $descriptor);
+        } catch (TestDoubleException) {
+        }
+    }
+
+    public function testIndexFaultPropagatesOnceNoTenantIndexesTheBytes(): void
+    {
+        $descriptor = $this->descriptor(hash('sha256', 'orphan'));
+        $fault = new TestDoubleException('index unavailable');
+
         $this->expectExceptionObject($fault);
 
-        new BlobArchive($store, $index)->store($this->tenant(), '/tmp/upload', $descriptor);
+        new BlobArchive($this->createStub(BlobStoreInterface::class), $this->indexFailingToSave($fault, null))->store($this->tenant(), '/tmp/upload', $descriptor);
     }
 
     public function testIndexFaultKeepsBytesAnotherTenantIndexes(): void
     {
         $descriptor = $this->descriptor(hash('sha256', 'shared'));
 
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('save')->willThrowException(new RuntimeException('index unavailable'));
-        $index->method('findByHash')->willReturn($descriptor);
-
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        $this->expectException(RuntimeException::class);
+        try {
+            new BlobArchive($store, $this->indexFailingToSave(new TestDoubleException('index unavailable'), $descriptor))->store($this->tenant(), '/tmp/upload', $descriptor);
+        } catch (TestDoubleException) {
+        }
+    }
 
-        new BlobArchive($store, $index)->store($this->tenant(), '/tmp/upload', $descriptor);
+    public function testIndexFaultPropagatesWhileAnotherTenantIndexesTheBytes(): void
+    {
+        $descriptor = $this->descriptor(hash('sha256', 'shared'));
+
+        $this->expectException(TestDoubleException::class);
+
+        new BlobArchive($this->createStub(BlobStoreInterface::class), $this->indexFailingToSave(new TestDoubleException('index unavailable'), $descriptor))->store($this->tenant(), '/tmp/upload', $descriptor);
     }
 
     public function testDiscardsAStagedFile(): void
@@ -106,14 +118,19 @@ final class BlobArchiveTest extends TestCase
         self::assertEquals(new RetrievedBlob($descriptor, '/var/blobs/served'), $result);
     }
 
-    public function testRetrieveReportsAnUnindexedHashWithoutTouchingTheStore(): void
+    public function testRetrieveReportsAnUnindexedHash(): void
+    {
+        $result = new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class))->retrieve(BlossomFixtures::blobHash(hash('sha256', 'missing')));
+
+        self::assertInstanceOf(BlobNotFoundFailure::class, $result);
+    }
+
+    public function testRetrieveNeverTouchesTheStoreForAnUnindexedHash(): void
     {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('retrievePath');
 
-        $result = new BlobArchive($store, $this->createStub(BlobIndexInterface::class))->retrieve(BlossomFixtures::blobHash(hash('sha256', 'missing')));
-
-        self::assertInstanceOf(BlobNotFoundFailure::class, $result);
+        new BlobArchive($store, $this->createStub(BlobIndexInterface::class))->retrieve(BlossomFixtures::blobHash(hash('sha256', 'missing')));
     }
 
     public function testRetrieveReportsIndexedBytesMissingFromTheStore(): void
@@ -130,43 +147,63 @@ final class BlobArchiveTest extends TestCase
 
     public function testRemovesBytesWhenLastTenantReleases(): void
     {
-        $sha256 = hash('sha256', 'to delete');
-
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('deleteForTenant')->willReturn(true);
-        $index->method('findByHash')->willReturn(null);
-
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('delete');
 
-        self::assertTrue(new BlobArchive($store, $index)->removeForTenant($this->tenant(), BlossomFixtures::blobHash($sha256)));
+        new BlobArchive($store, $this->indexReleasing(true, null))->removeForTenant($this->tenant(), BlossomFixtures::blobHash(hash('sha256', 'to delete')));
+    }
+
+    public function testReportsTheReleaseWhenLastTenantReleases(): void
+    {
+        self::assertTrue(new BlobArchive($this->createStub(BlobStoreInterface::class), $this->indexReleasing(true, null))->removeForTenant($this->tenant(), BlossomFixtures::blobHash(hash('sha256', 'to delete'))));
     }
 
     public function testKeepsBytesWhileAnotherTenantHolds(): void
     {
         $sha256 = hash('sha256', 'shared');
 
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('deleteForTenant')->willReturn(true);
-        $index->method('findByHash')->willReturn($this->descriptor($sha256));
-
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        self::assertTrue(new BlobArchive($store, $index)->removeForTenant($this->tenant(), BlossomFixtures::blobHash($sha256)));
+        new BlobArchive($store, $this->indexReleasing(true, $this->descriptor($sha256)))->removeForTenant($this->tenant(), BlossomFixtures::blobHash($sha256));
+    }
+
+    public function testReportsTheReleaseWhileAnotherTenantHolds(): void
+    {
+        $sha256 = hash('sha256', 'shared');
+
+        self::assertTrue(new BlobArchive($this->createStub(BlobStoreInterface::class), $this->indexReleasing(true, $this->descriptor($sha256)))->removeForTenant($this->tenant(), BlossomFixtures::blobHash($sha256)));
     }
 
     public function testReportsFailureWhenTenantDoesNotHoldBlob(): void
     {
-        $sha256 = hash('sha256', 'nonexistent');
+        self::assertFalse(new BlobArchive($this->createStub(BlobStoreInterface::class), $this->indexReleasing(false, null))->removeForTenant($this->tenant(), BlossomFixtures::blobHash(hash('sha256', 'nonexistent'))));
+    }
 
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('deleteForTenant')->willReturn(false);
-
+    public function testKeepsBytesWhenTenantDoesNotHoldBlob(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        self::assertFalse(new BlobArchive($store, $index)->removeForTenant($this->tenant(), BlossomFixtures::blobHash($sha256)));
+        new BlobArchive($store, $this->indexReleasing(false, null))->removeForTenant($this->tenant(), BlossomFixtures::blobHash(hash('sha256', 'nonexistent')));
+    }
+
+    private function indexFailingToSave(TestDoubleException $fault, ?BlobDescriptor $indexedByAnotherTenant): BlobIndexInterface
+    {
+        $index = $this->createStub(BlobIndexInterface::class);
+        $index->method('save')->willThrowException($fault);
+        $index->method('findByHash')->willReturn($indexedByAnotherTenant);
+
+        return $index;
+    }
+
+    private function indexReleasing(bool $released, ?BlobDescriptor $heldByAnotherTenant): BlobIndexInterface
+    {
+        $index = $this->createStub(BlobIndexInterface::class);
+        $index->method('deleteForTenant')->willReturn($released);
+        $index->method('findByHash')->willReturn($heldByAnotherTenant);
+
+        return $index;
     }
 
     private function tenant(): PublicKey

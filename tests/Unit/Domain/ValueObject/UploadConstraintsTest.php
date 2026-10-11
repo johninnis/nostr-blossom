@@ -21,12 +21,14 @@ final class UploadConstraintsTest extends TestCase
         self::assertSame(['image/png', 'image/jpeg'], array_map(strval(...), $constraints->getAllowedMimeTypes()->toArray()));
     }
 
-    public function testAllowedMimeTypesAreNormalisedMimeTypeObjects(): void
+    public function testAllowedMimeTypesAreMimeTypeObjects(): void
     {
-        $constraints = BlossomFixtures::uploadConstraints(1024, ['Image/PNG']);
+        self::assertContainsOnlyInstancesOf(MimeType::class, BlossomFixtures::uploadConstraints(1024, ['Image/PNG'])->getAllowedMimeTypes());
+    }
 
-        self::assertContainsOnlyInstancesOf(MimeType::class, $constraints->getAllowedMimeTypes());
-        self::assertSame(['image/png'], array_map(strval(...), $constraints->getAllowedMimeTypes()->toArray()));
+    public function testAllowedMimeTypesAreNormalised(): void
+    {
+        self::assertSame(['image/png'], array_map(strval(...), BlossomFixtures::uploadConstraints(1024, ['Image/PNG'])->getAllowedMimeTypes()->toArray()));
     }
 
     public function testExposesMaxUploadBytesForAdvertising(): void
@@ -36,11 +38,17 @@ final class UploadConstraintsTest extends TestCase
 
     public function testIsMimeTypeAllowed(): void
     {
-        $constraints = BlossomFixtures::uploadConstraints(1024, ['image/png', 'image/jpeg']);
+        self::assertTrue($this->constraints()->isMimeTypeAllowed(BlossomFixtures::mimeType('image/png')));
+    }
 
-        self::assertTrue($constraints->isMimeTypeAllowed(BlossomFixtures::mimeType('image/png')));
-        self::assertTrue($constraints->isMimeTypeAllowed(BlossomFixtures::mimeType('image/jpeg')));
-        self::assertFalse($constraints->isMimeTypeAllowed(BlossomFixtures::mimeType('video/mp4')));
+    public function testEachListedMimeTypeIsAllowed(): void
+    {
+        self::assertTrue($this->constraints()->isMimeTypeAllowed(BlossomFixtures::mimeType('image/jpeg')));
+    }
+
+    public function testAnUnlistedMimeTypeIsNotAllowed(): void
+    {
+        self::assertFalse($this->constraints()->isMimeTypeAllowed(BlossomFixtures::mimeType('video/mp4')));
     }
 
     public function testGuardUploadSizeAdmitsAWithinLimitSize(): void

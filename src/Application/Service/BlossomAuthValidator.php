@@ -12,6 +12,7 @@ use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\ServerIdentity;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Entity\Event;
+use Innis\Nostr\Core\Domain\Enum\SoleTagValueState;
 use Innis\Nostr\Core\Domain\Failure\AuthHeaderDecodeFailure;
 use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
@@ -129,15 +130,15 @@ final readonly class BlossomAuthValidator implements BlossomAuthValidatorInterfa
         return $event->isExpiredAt($this->clock->now()) ? AuthenticationFailure::expired() : null;
     }
 
-    // Deliberate: a token naming more than one verb is refused outright, never resolved by tag order — see ADR-0024
+    // Deliberate: the verb is one claim read through the sole-value reader, not the hashtag reader — an empty value is a value, and verbs that disagree name none — see ADR-0024
     private function verifyVerb(Event $event, BlossomVerb $verb): ?BlossomFailure
     {
-        $named = $event->getTags()->getHashtags()->toStrings();
-        if (count($named) > 1) {
-            return AuthenticationFailure::ambiguousVerb($named);
+        $named = $event->getTags()->getSoleValueByType(TagType::hashtag(), strtolower(...));
+        if (SoleTagValueState::Disagreeing === $named->getState()) {
+            return AuthenticationFailure::ambiguousVerb($named->getDistinctValues());
         }
 
-        $actual = $named[0] ?? '';
+        $actual = $named->getValue() ?? '';
 
         return $actual === $verb->value ? null : AuthenticationFailure::wrongVerb($verb->value, $actual);
     }

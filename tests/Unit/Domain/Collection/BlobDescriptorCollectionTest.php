@@ -15,23 +15,48 @@ final class BlobDescriptorCollectionTest extends TestCase
 {
     public function testEmptyCollection(): void
     {
-        $collection = new BlobDescriptorCollection();
-
-        self::assertTrue($collection->isEmpty());
-        self::assertCount(0, $collection);
-        self::assertSame([], $collection->jsonSerialize());
+        self::assertTrue(new BlobDescriptorCollection()->isEmpty());
     }
 
-    public function testIteratesAndSerialisesDescriptors(): void
+    public function testAnEmptyCollectionCountsNothing(): void
+    {
+        self::assertCount(0, new BlobDescriptorCollection());
+    }
+
+    public function testAnEmptyCollectionSerialisesAsAnEmptyList(): void
+    {
+        self::assertSame([], new BlobDescriptorCollection()->jsonSerialize());
+    }
+
+    public function testACollectionHoldingADescriptorIsNotEmpty(): void
+    {
+        self::assertFalse(new BlobDescriptorCollection([$this->descriptor('blob')])->isEmpty());
+    }
+
+    public function testCountsItsDescriptors(): void
+    {
+        self::assertCount(1, new BlobDescriptorCollection([$this->descriptor('blob')]));
+    }
+
+    public function testIteratesItsDescriptors(): void
     {
         $descriptor = $this->descriptor('blob');
-        $collection = new BlobDescriptorCollection([$descriptor]);
 
-        self::assertFalse($collection->isEmpty());
-        self::assertCount(1, $collection);
-        self::assertSame([$descriptor], iterator_to_array($collection));
-        self::assertSame([$descriptor], $collection->toArray());
-        self::assertSame($descriptor->toArray(), $collection->jsonSerialize()[0]->toArray());
+        self::assertSame([$descriptor], iterator_to_array(new BlobDescriptorCollection([$descriptor])));
+    }
+
+    public function testListsItsDescriptors(): void
+    {
+        $descriptor = $this->descriptor('blob');
+
+        self::assertSame([$descriptor], new BlobDescriptorCollection([$descriptor])->toArray());
+    }
+
+    public function testSerialisesAsItsDescriptors(): void
+    {
+        $descriptor = $this->descriptor('blob');
+
+        self::assertSame([$descriptor], new BlobDescriptorCollection([$descriptor])->jsonSerialize());
     }
 
     public function testRejectsNonDescriptorMember(): void

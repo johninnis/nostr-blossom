@@ -19,6 +19,7 @@ use Innis\Nostr\Blossom\Application\Service\TenantBlossomPolicy;
 use Innis\Nostr\Blossom\Application\UseCase\MirrorBlobUseCase;
 use Innis\Nostr\Blossom\Domain\Failure\AuthenticationFailure;
 use Innis\Nostr\Blossom\Domain\Failure\AuthorisationFailure;
+use Innis\Nostr\Blossom\Domain\Failure\BlossomFailure;
 use Innis\Nostr\Blossom\Domain\Failure\RemoteFetchFailure;
 use Innis\Nostr\Blossom\Domain\Failure\UnsupportedMimeTypeFailure;
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
@@ -28,7 +29,6 @@ use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
 use Innis\Nostr\Core\Domain\Collection\TagCollection;
 use Innis\Nostr\Core\Domain\Entity\Event;
-use Innis\Nostr\Core\Domain\Service\NostrAuthHeaderCodec;
 use Innis\Nostr\Core\Domain\Service\SignatureServiceInterface;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventContent;
 use Innis\Nostr\Core\Domain\ValueObject\Content\EventKind;
@@ -61,33 +61,48 @@ final class MirrorBlobTest extends TestCase
         $this->authValidator = new BlossomAuthValidator($this->signatureService, $this->clock(), $this->config->getIdentity());
     }
 
-    public function testSuccessfulMirror(): void
+    public function testMirrorStoresTheFetchedBlob(): void
     {
-        $hash = hash('sha256', 'mirrored');
-
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('store');
 
+        $this->mirrorAuthorisedBlob($store, $this->createStub(BlobIndexInterface::class));
+    }
+
+    public function testMirrorIndexesTheFetchedBlob(): void
+    {
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::once())->method('save');
 
-        $mirror = $this->useCase($store, $index, $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'));
-        $result = $mirror->execute($this->authHeader($hash), BlossomFixtures::httpUrl('https://remote.test/blob'));
+        $this->mirrorAuthorisedBlob($this->createStub(BlobStoreInterface::class), $index);
+    }
 
-        self::assertInstanceOf(BlobDescriptor::class, $result);
-        self::assertSame($hash, $result->getSha256()->toHex());
+    public function testMirrorDescribesTheFetchedBlobByItsHash(): void
+    {
+        $result = $this->mirrorAuthorisedBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
+
+        self::assertSame(hash('sha256', 'mirrored'), BlossomFixtures::descriptorIn($result)->getSha256()->toHex());
     }
 
     public function testRejectsDisallowedMimeType(): void
     {
+        self::assertInstanceOf(UnsupportedMimeTypeFailure::class, $this->mirrorDisallowedMimeType($this->createStub(BlobStoreInterface::class)));
+    }
+
+    public function testDoesNotStoreDisallowedMimeType(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
+
+        $this->mirrorDisallowedMimeType($store);
+    }
+
+    public function testDiscardsFetchedFileOfDisallowedMimeType(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
 
-        $mirror = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->inspector(hash('sha256', 'gif'), 2048), $this->fetcher('/tmp/mirror', 'image/gif'));
-        $result = $mirror->execute($this->authHeader(), BlossomFixtures::httpUrl('https://remote.test/blob'));
-
-        self::assertInstanceOf(UnsupportedMimeTypeFailure::class, $result);
+        $this->mirrorDisallowedMimeType($store);
     }
 
     public function testRejectsFailedFetch(): void
@@ -102,28 +117,42 @@ final class MirrorBlobTest extends TestCase
         self::assertInstanceOf(RemoteFetchFailure::class, $result);
     }
 
+    public function testRejectsUnauthenticatedRequest(): void
+    {
+        $result = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $this->createStub(RemoteBlobFetcherInterface::class))
+            ->execute('', BlossomFixtures::httpUrl('https://remote.test/blob'));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
     public function testRejectsUnauthenticatedRequestBeforeFetching(): void
     {
         $fetcher = $this->createMock(RemoteBlobFetcherInterface::class);
         $fetcher->expects(self::never())->method('fetch');
 
-        $store = $this->createStub(BlobStoreInterface::class);
-        $mirror = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $fetcher);
-        $result = $mirror->execute('', BlossomFixtures::httpUrl('https://remote.test/blob'));
-
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->createStub(BlobInspectorInterface::class), $fetcher)
+            ->execute('', BlossomFixtures::httpUrl('https://remote.test/blob'));
     }
 
     public function testRejectsBlobNotAuthorisedByHashTag(): void
     {
+        self::assertInstanceOf(AuthorisationFailure::class, $this->mirrorBlobTheTokenDoesNotName($this->createStub(BlobStoreInterface::class)));
+    }
+
+    public function testDoesNotStoreBlobNotAuthorisedByHashTag(): void
+    {
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('store');
+
+        $this->mirrorBlobTheTokenDoesNotName($store);
+    }
+
+    public function testDiscardsFetchedBlobNotAuthorisedByHashTag(): void
+    {
+        $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('discard');
 
-        $mirror = $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->inspector(hash('sha256', 'fetched'), 2048), $this->fetcher('/tmp/mirror', 'image/png'));
-        $result = $mirror->execute($this->authHeader(hash('sha256', 'authorised')), BlossomFixtures::httpUrl('https://remote.test/blob'));
-
-        self::assertInstanceOf(AuthorisationFailure::class, $result);
+        $this->mirrorBlobTheTokenDoesNotName($store);
     }
 
     public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
@@ -132,8 +161,8 @@ final class MirrorBlobTest extends TestCase
         $hash = hash('sha256', 'mirrored');
         $mirror = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'));
 
-        $trusted = $mirror->execute($this->withInvalidSignature($this->authHeader($hash)), BlossomFixtures::httpUrl('https://remote.test/blob'));
-        $unknown = $mirror->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), BlossomFixtures::httpUrl('https://remote.test/blob'));
+        $trusted = $mirror->execute($this->invalidlySignedHeader($hash), BlossomFixtures::httpUrl('https://remote.test/blob'));
+        $unknown = $mirror->execute($this->invalidlySignedHeader($hash, $stranger), BlossomFixtures::httpUrl('https://remote.test/blob'));
 
         self::assertEquals($trusted, $unknown);
     }
@@ -144,7 +173,7 @@ final class MirrorBlobTest extends TestCase
         $hash = hash('sha256', 'mirrored');
         $mirror = $this->useCase($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class), $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'));
 
-        $result = $mirror->execute($this->withInvalidSignature($this->authHeader($hash, $stranger)), BlossomFixtures::httpUrl('https://remote.test/blob'));
+        $result = $mirror->execute($this->invalidlySignedHeader($hash, $stranger), BlossomFixtures::httpUrl('https://remote.test/blob'));
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
     }
@@ -158,6 +187,26 @@ final class MirrorBlobTest extends TestCase
         $result = $mirror->execute($this->authHeader($hash, $stranger), BlossomFixtures::httpUrl('https://remote.test/blob'));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
+    private function mirrorAuthorisedBlob(BlobStoreInterface $store, BlobIndexInterface $index): BlobDescriptor|BlossomFailure
+    {
+        $hash = hash('sha256', 'mirrored');
+
+        return $this->useCase($store, $index, $this->inspector($hash, 2048), $this->fetcher('/tmp/mirror', 'image/png'))
+            ->execute($this->authHeader($hash), BlossomFixtures::httpUrl('https://remote.test/blob'));
+    }
+
+    private function mirrorDisallowedMimeType(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->inspector(hash('sha256', 'gif'), 2048), $this->fetcher('/tmp/mirror', 'image/gif'))
+            ->execute($this->authHeader(), BlossomFixtures::httpUrl('https://remote.test/blob'));
+    }
+
+    private function mirrorBlobTheTokenDoesNotName(BlobStoreInterface $store): BlobDescriptor|BlossomFailure
+    {
+        return $this->useCase($store, $this->createStub(BlobIndexInterface::class), $this->inspector(hash('sha256', 'fetched'), 2048), $this->fetcher('/tmp/mirror', 'image/png'))
+            ->execute($this->authHeader(hash('sha256', 'authorised')), BlossomFixtures::httpUrl('https://remote.test/blob'));
     }
 
     private function useCase(BlobStoreInterface $store, BlobIndexInterface $index, BlobInspectorInterface $inspector, RemoteBlobFetcherInterface $fetcher): MirrorBlobUseCase
@@ -194,8 +243,16 @@ final class MirrorBlobTest extends TestCase
 
     private function authHeader(?string $hash = null, ?KeyPair $signer = null): string
     {
-        $signer ??= $this->ownerKeyPair;
+        return BlossomFixtures::authHeader($this->authEvent($hash, $signer ?? $this->ownerKeyPair));
+    }
 
+    private function invalidlySignedHeader(string $hash, ?KeyPair $signer = null): string
+    {
+        return BlossomFixtures::authHeaderWithInvalidSignature($this->authEvent($hash, $signer ?? $this->ownerKeyPair));
+    }
+
+    private function authEvent(?string $hash, KeyPair $signer): Event
+    {
         $tags = [
             Tag::fromArray([TagType::HASHTAG, 'upload']),
             Tag::fromArray([TagType::EXPIRATION, (string) (time() + 3600)]),
@@ -205,23 +262,11 @@ final class MirrorBlobTest extends TestCase
             $tags[] = Tag::fromArray([TagType::SHA256, $hash]);
         }
 
-        $tags = new TagCollection($tags);
-
-        $event = Rumour::draft(
+        return Rumour::draft(
             $signer->getPublicKey(),
             EventKind::fromInt(EventKind::BLOSSOM_AUTHORISATION),
             EventContent::fromString('Mirror blob'),
-            $tags,
+            new TagCollection($tags),
         )->sign($signer, $this->signatureService);
-
-        return BlossomFixtures::authHeader($event);
-    }
-
-    private function withInvalidSignature(string $header): string
-    {
-        $event = NostrAuthHeaderCodec::decodeBlossom($header);
-        self::assertInstanceOf(Event::class, $event);
-
-        return BlossomFixtures::authHeaderWithInvalidSignature($event);
     }
 }

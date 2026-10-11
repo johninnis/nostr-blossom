@@ -17,7 +17,6 @@ use Innis\Nostr\Blossom\Domain\Failure\BlobReadFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlobTooLargeFailure;
 use Innis\Nostr\Blossom\Domain\Failure\BlossomFailure;
 use Innis\Nostr\Blossom\Domain\Failure\UnsupportedMimeTypeFailure;
-use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
 use Innis\Nostr\Blossom\Domain\ValueObject\IncomingBlob;
 use Innis\Nostr\Blossom\Domain\ValueObject\ServerConfig;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
@@ -52,8 +51,7 @@ final class BlobValidatorTest extends TestCase
             null,
         );
 
-        self::assertInstanceOf(StorableBlob::class, $result);
-        self::assertSame($hash, $result->getHash()->toHex());
+        self::assertEquals(new StorableBlob($blob, '/tmp/upload', BlossomFixtures::mimeType('image/webp')), $result);
     }
 
     public function testRejectsDisallowedMimeType(): void
@@ -138,8 +136,7 @@ final class BlobValidatorTest extends TestCase
             new PendingBlob('/tmp/input', BlossomFixtures::mimeType('image/jpeg')),
         );
 
-        self::assertInstanceOf(BlobHash::class, $result);
-        self::assertSame($originalHash, $result->toHex());
+        self::assertEquals(BlossomFixtures::blobHash($originalHash), $result);
     }
 
     private function validator(IncomingBlob $inspected, ?BlossomFailure $binding = null): BlobValidator

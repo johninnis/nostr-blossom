@@ -55,17 +55,19 @@ final class DeleteBlobTest extends TestCase
     public function testDeleteRemovesBytesWhenLastTenantReleases(): void
     {
         $sha256 = hash('sha256', 'to delete');
-        $authHeader = $this->buildAuthHeader('delete', $sha256);
-
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('deleteForTenant')->willReturn(true);
-        $index->method('findByHash')->willReturn(null);
 
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::once())->method('delete');
 
-        $deleteBlob = new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
-        $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
+        $this->deleteBlob($store, $this->indexReleasing(null))->execute($this->buildAuthHeader('delete', $sha256), BlossomFixtures::blobHash($sha256));
+    }
+
+    public function testDeleteSucceedsWhenLastTenantReleases(): void
+    {
+        $sha256 = hash('sha256', 'to delete');
+
+        $result = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->indexReleasing(null))
+            ->execute($this->buildAuthHeader('delete', $sha256), BlossomFixtures::blobHash($sha256));
 
         self::assertNull($result);
     }
@@ -73,17 +75,19 @@ final class DeleteBlobTest extends TestCase
     public function testDeleteKeepsBytesWhileAnotherTenantHolds(): void
     {
         $sha256 = hash('sha256', 'shared');
-        $authHeader = $this->buildAuthHeader('delete', $sha256);
-
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('deleteForTenant')->willReturn(true);
-        $index->method('findByHash')->willReturn($this->descriptor($sha256));
 
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        $deleteBlob = new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
-        $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
+        $this->deleteBlob($store, $this->indexReleasing($this->descriptor($sha256)))->execute($this->buildAuthHeader('delete', $sha256), BlossomFixtures::blobHash($sha256));
+    }
+
+    public function testDeleteSucceedsWhileAnotherTenantHolds(): void
+    {
+        $sha256 = hash('sha256', 'shared');
+
+        $result = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->indexReleasing($this->descriptor($sha256)))
+            ->execute($this->buildAuthHeader('delete', $sha256), BlossomFixtures::blobHash($sha256));
 
         self::assertNull($result);
     }
@@ -91,28 +95,28 @@ final class DeleteBlobTest extends TestCase
     public function testDeleteReturnsErrorWhenTenantDoesNotHoldBlob(): void
     {
         $sha256 = hash('sha256', 'nonexistent');
-        $authHeader = $this->buildAuthHeader('delete', $sha256);
 
-        $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('deleteForTenant')->willReturn(false);
+        $result = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->indexHoldingNothing())
+            ->execute($this->buildAuthHeader('delete', $sha256), BlossomFixtures::blobHash($sha256));
+
+        self::assertInstanceOf(BlobNotFoundFailure::class, $result);
+    }
+
+    public function testDeleteKeepsBytesWhenTenantDoesNotHoldBlob(): void
+    {
+        $sha256 = hash('sha256', 'nonexistent');
 
         $store = $this->createMock(BlobStoreInterface::class);
         $store->expects(self::never())->method('delete');
 
-        $deleteBlob = new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
-        $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
-
-        self::assertInstanceOf(BlobNotFoundFailure::class, $result);
+        $this->deleteBlob($store, $this->indexHoldingNothing())->execute($this->buildAuthHeader('delete', $sha256), BlossomFixtures::blobHash($sha256));
     }
 
     public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
     {
         $stranger = KeyPair::generate($this->signatureService);
         $sha256 = hash('sha256', 'to delete');
-        $deleteBlob = new DeleteBlobUseCase(
-            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->gate(),
-        );
+        $deleteBlob = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
 
         $trusted = $deleteBlob->execute($this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
         $unknown = $deleteBlob->execute($this->headerWithInvalidSignature($stranger, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
@@ -124,10 +128,7 @@ final class DeleteBlobTest extends TestCase
     {
         $stranger = KeyPair::generate($this->signatureService);
         $sha256 = hash('sha256', 'to delete');
-        $deleteBlob = new DeleteBlobUseCase(
-            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->gate(),
-        );
+        $deleteBlob = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
 
         $result = $deleteBlob->execute($this->headerWithInvalidSignature($stranger, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
 
@@ -138,10 +139,7 @@ final class DeleteBlobTest extends TestCase
     {
         $stranger = KeyPair::generate($this->signatureService);
         $sha256 = hash('sha256', 'to delete');
-        $deleteBlob = new DeleteBlobUseCase(
-            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->gate(),
-        );
+        $deleteBlob = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
 
         $result = $deleteBlob->execute($this->buildAuthHeader('delete', $sha256, $stranger), BlossomFixtures::blobHash($sha256));
 
@@ -151,18 +149,22 @@ final class DeleteBlobTest extends TestCase
     public function testRejectsInvalidSignatureWhenBindingPasses(): void
     {
         $sha256 = hash('sha256', 'to delete');
-        $authHeader = $this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $sha256);
+
+        $result = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class))
+            ->execute($this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
+
+        self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testInvalidSignatureReleasesNothingWhenBindingPasses(): void
+    {
+        $sha256 = hash('sha256', 'to delete');
 
         $index = $this->createMock(BlobIndexInterface::class);
         $index->expects(self::never())->method('deleteForTenant');
 
-        $deleteBlob = new DeleteBlobUseCase(
-            new BlobArchive($this->createStub(BlobStoreInterface::class), $index),
-            $this->gate(),
-        );
-        $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($sha256));
-
-        self::assertInstanceOf(AuthenticationFailure::class, $result);
+        $this->deleteBlob($this->createStub(BlobStoreInterface::class), $index)
+            ->execute($this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $sha256), BlossomFixtures::blobHash($sha256));
     }
 
     public function testBlobBindingIsCheckedBeforeSignatureIsVerified(): void
@@ -171,10 +173,7 @@ final class DeleteBlobTest extends TestCase
         $namedHash = hash('sha256', 'a-different-blob');
         $authHeader = $this->headerWithInvalidSignature($this->ownerKeyPair, 'delete', $namedHash);
 
-        $deleteBlob = new DeleteBlobUseCase(
-            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->gate(),
-        );
+        $deleteBlob = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($deletedHash));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
@@ -186,13 +185,32 @@ final class DeleteBlobTest extends TestCase
         $namedHash = hash('sha256', 'a-different-blob');
         $authHeader = $this->buildAuthHeader('delete', $namedHash);
 
-        $deleteBlob = new DeleteBlobUseCase(
-            new BlobArchive($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class)),
-            $this->gate(),
-        );
+        $deleteBlob = $this->deleteBlob($this->createStub(BlobStoreInterface::class), $this->createStub(BlobIndexInterface::class));
         $result = $deleteBlob->execute($authHeader, BlossomFixtures::blobHash($deletedHash));
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
+    private function deleteBlob(BlobStoreInterface $store, BlobIndexInterface $index): DeleteBlobUseCase
+    {
+        return new DeleteBlobUseCase(new BlobArchive($store, $index), $this->gate());
+    }
+
+    private function indexReleasing(?BlobDescriptor $stillHeld): BlobIndexInterface
+    {
+        $index = $this->createStub(BlobIndexInterface::class);
+        $index->method('deleteForTenant')->willReturn(true);
+        $index->method('findByHash')->willReturn($stillHeld);
+
+        return $index;
+    }
+
+    private function indexHoldingNothing(): BlobIndexInterface
+    {
+        $index = $this->createStub(BlobIndexInterface::class);
+        $index->method('deleteForTenant')->willReturn(false);
+
+        return $index;
     }
 
     private function gate(): BlossomAccessGate

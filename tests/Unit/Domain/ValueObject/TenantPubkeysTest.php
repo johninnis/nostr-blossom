@@ -13,15 +13,17 @@ final class TenantPubkeysTest extends TestCase
 {
     public function testContainsListedPubkey(): void
     {
-        $first = BlossomFixtures::publicKey(str_repeat('a', 64));
-        $second = BlossomFixtures::publicKey(str_repeat('b', 64));
-        $stranger = BlossomFixtures::publicKey(str_repeat('c', 64));
+        self::assertTrue($this->twoTenants()->contains(BlossomFixtures::publicKey(str_repeat('a', 64))));
+    }
 
-        $tenants = new TenantPubkeys([$first, $second]);
+    public function testContainsEachListedPubkey(): void
+    {
+        self::assertTrue($this->twoTenants()->contains(BlossomFixtures::publicKey(str_repeat('b', 64))));
+    }
 
-        self::assertTrue($tenants->contains($first));
-        self::assertTrue($tenants->contains($second));
-        self::assertFalse($tenants->contains($stranger));
+    public function testDoesNotContainAnUnlistedPubkey(): void
+    {
+        self::assertFalse($this->twoTenants()->contains(BlossomFixtures::publicKey(str_repeat('c', 64))));
     }
 
     public function testToArrayDeduplicatesByPubkey(): void
@@ -45,5 +47,10 @@ final class TenantPubkeysTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         new TenantPubkeys([BlossomFixtures::publicKey(str_repeat('a', 64)), 'not-a-pubkey']);
+    }
+
+    private function twoTenants(): TenantPubkeys
+    {
+        return new TenantPubkeys([BlossomFixtures::publicKey(str_repeat('a', 64)), BlossomFixtures::publicKey(str_repeat('b', 64))]);
     }
 }

@@ -18,7 +18,7 @@ A reader who has just read ADR-0006 will see the third behaviour as an inconsist
 
 ## Decision
 
-The gated read takes the third behaviour. `BlossomAuthValidator::requireBlobInScope()` returns `null` when the event carries no `x` tags or when one of them matches the requested hash, and `AuthorisationFailure::blobNotAuthorised()` when `x` tags are present but none matches. `GetBlobUseCase` runs it on the gated path only, sequenced `parse` → scope → `verify` → policy: the scope check reads nothing but the caller's own submitted event, so per ADR-0003 it runs before the expensive signature verification, while ADR-0014's verify-before-policy ordering is untouched.
+The gated read takes the third behaviour. `BlossomAuthValidator::requireBlobInScope()` returns `null` when the event carries no `x` tags or when one of them matches the requested hash, and `AuthorisationFailure::blobNotAuthorised()` when `x` tags are present but none matches. `GetBlobUseCase` runs it on the gated path only, sequenced `parse` → scope → `verify` → policy: the scope check reads nothing but the caller's own submitted event, so, as a check blind to the key, it runs before the expensive signature verification (ADR-0026), while ADR-0014's verify-before-policy ordering is untouched.
 
 `requireAuthorisedBlob()` (the ADR-0006 *MUST* binding) and `requireBlobInScope()` stay two named methods, not one method with a flag: the write verbs require the tag, the read verb only honours it, and each call site says which rule it applies.
 
@@ -27,3 +27,4 @@ The gated read takes the third behaviour. `BlossomAuthValidator::requireBlobInSc
 - A scoped get token is only good for the blobs it names: leaking it no longer leaks the rest of the server. A tag-less get token keeps working, as BUD-11 intends.
 - A mis-scoped token is rejected before secp256k1 runs and before any policy index read.
 - The asymmetry with ADR-0006 is deliberate: writes bind to named content because the client always knows the hash it is storing or deleting; reads may legitimately be token-per-session. A future reader must not "unify" the two methods into one required binding, nor drop the scope check as redundant beside the policy — the policy decides *who* may read, the scope decides *what this token covers*. `GetBlobTest` pins both the scoped rejection and the tag-less admit.
+- Shared decision: nostr-adrs ADR-0028.

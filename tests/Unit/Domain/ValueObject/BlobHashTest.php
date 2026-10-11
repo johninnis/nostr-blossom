@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Innis\Nostr\Blossom\Tests\Unit\Domain\ValueObject;
 
 use Innis\Nostr\Blossom\Domain\ValueObject\BlobHash;
+use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use PHPUnit\Framework\TestCase;
 
 final class BlobHashTest extends TestCase
@@ -12,10 +13,8 @@ final class BlobHashTest extends TestCase
     public function testFromHexWithValidHash(): void
     {
         $hex = hash('sha256', 'test content');
-        $hash = BlobHash::tryFromHex($hex);
 
-        self::assertNotNull($hash);
-        self::assertSame($hex, $hash->toHex());
+        self::assertSame($hex, BlobHash::tryFromHex($hex)?->toHex());
     }
 
     public function testFromHexRejectsInvalidLength(): void
@@ -31,30 +30,19 @@ final class BlobHashTest extends TestCase
     public function testEquality(): void
     {
         $hex = hash('sha256', 'same');
-        $a = BlobHash::tryFromHex($hex);
-        $b = BlobHash::tryFromHex($hex);
 
-        self::assertNotNull($a);
-        self::assertNotNull($b);
-        self::assertTrue($a->equals($b));
+        self::assertTrue(BlossomFixtures::blobHash($hex)->equals(BlossomFixtures::blobHash($hex)));
     }
 
     public function testInequality(): void
     {
-        $a = BlobHash::tryFromHex(hash('sha256', 'one'));
-        $b = BlobHash::tryFromHex(hash('sha256', 'two'));
-
-        self::assertNotNull($a);
-        self::assertNotNull($b);
-        self::assertFalse($a->equals($b));
+        self::assertFalse(BlossomFixtures::blobHash(hash('sha256', 'one'))->equals(BlossomFixtures::blobHash(hash('sha256', 'two'))));
     }
 
     public function testCastsToHexString(): void
     {
         $hex = hash('sha256', 'stringable');
-        $hash = BlobHash::tryFromHex($hex);
 
-        self::assertNotNull($hash);
-        self::assertSame($hex, (string) $hash);
+        self::assertSame($hex, (string) BlossomFixtures::blobHash($hex));
     }
 }

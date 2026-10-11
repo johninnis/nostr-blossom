@@ -66,18 +66,22 @@ final class TenantBlossomPolicyTest extends TestCase
 
     public function testRejectsTenantListingAnotherPubkey(): void
     {
-        $error = $this->policy->allowList($this->tenant, $this->stranger);
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy->allowList($this->tenant, $this->stranger));
+    }
 
-        self::assertInstanceOf(AuthorisationFailure::class, $error);
-        self::assertSame('Authenticated pubkey may only list its own blobs', $error->getMessage());
+    public function testExplainsThatATenantMayOnlyListItsOwnBlobs(): void
+    {
+        self::assertSame('Authenticated pubkey may only list its own blobs', $this->policy->allowList($this->tenant, $this->stranger)?->getMessage());
     }
 
     public function testRejectsStrangerListBeforeOwnershipCheck(): void
     {
-        $error = $this->policy->allowList($this->stranger, $this->stranger);
+        self::assertInstanceOf(AuthorisationFailure::class, $this->policy->allowList($this->stranger, $this->stranger));
+    }
 
-        self::assertInstanceOf(AuthorisationFailure::class, $error);
-        self::assertSame('Pubkey is not an authorised tenant', $error->getMessage());
+    public function testExplainsThatAStrangerListingIsNotATenant(): void
+    {
+        self::assertSame('Pubkey is not an authorised tenant', $this->policy->allowList($this->stranger, $this->stranger)?->getMessage());
     }
 
     public function testPublicGetAllowsAnonymous(): void

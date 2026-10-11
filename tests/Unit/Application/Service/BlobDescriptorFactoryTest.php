@@ -6,46 +6,45 @@ namespace Innis\Nostr\Blossom\Tests\Unit\Application\Service;
 
 use Innis\Nostr\Blossom\Application\DTO\StorableBlob;
 use Innis\Nostr\Blossom\Application\Service\BlobDescriptorFactory;
+use Innis\Nostr\Blossom\Domain\ValueObject\BlobDescriptor;
 use Innis\Nostr\Blossom\Domain\ValueObject\IncomingBlob;
 use Innis\Nostr\Blossom\Domain\ValueObject\MediaMetadata;
 use Innis\Nostr\Blossom\Tests\Support\BlossomFixtures;
 use Innis\Nostr\Core\Application\Port\ClockInterface;
+use Innis\Nostr\Core\Domain\ValueObject\Content\FileMetadata;
 use Innis\Nostr\Core\Domain\ValueObject\Timestamp;
 use PHPUnit\Framework\TestCase;
 
 final class BlobDescriptorFactoryTest extends TestCase
 {
-    public function testBuildsDescriptorWithoutNip94WhenNoMediaOrOriginalHash(): void
+    public function testAddressesTheDescriptorUnderTheBaseUrlByHashAndExtension(): void
     {
-        $hash = BlossomFixtures::blobHash(hash('sha256', 'plain'));
-        $storable = new StorableBlob(
-            new IncomingBlob($hash, 2048),
-            '/tmp/plain',
-            BlossomFixtures::mimeType('image/png'),
-        );
-
-        $descriptor = $this->factory()->create($storable);
-
-        self::assertSame('https://blossom.test/'.$hash->toHex().'.png', (string) $descriptor->getUrl());
-        self::assertSame(2048, $descriptor->getSize());
-        self::assertSame(1_000_000, $descriptor->getUploaded()->toInt());
-        self::assertNull($descriptor->getNip94());
+        self::assertSame('https://blossom.test/'.hash('sha256', 'plain').'.png', (string) $this->plainDescriptor()->getUrl());
     }
 
-    public function testBuildsNip94FromMediaMetadata(): void
+    public function testCarriesTheBlobsSize(): void
     {
-        $hash = BlossomFixtures::blobHash(hash('sha256', 'pixels'));
-        $storable = new StorableBlob(
-            new IncomingBlob($hash, 4096, new MediaMetadata('800x600', 'LEHV6nWB')),
-            '/tmp/pixels',
-            BlossomFixtures::mimeType('image/webp'),
-        );
+        self::assertSame(2048, $this->plainDescriptor()->getSize());
+    }
 
-        $nip94 = $this->factory()->create($storable)->getNip94();
+    public function testStampsTheUploadTimeFromTheClock(): void
+    {
+        self::assertSame(1_000_000, $this->plainDescriptor()->getUploaded()->toInt());
+    }
 
-        self::assertNotNull($nip94);
-        self::assertSame('800x600', $nip94->getDimensions());
-        self::assertSame('LEHV6nWB', $nip94->getBlurhash());
+    public function testBuildsDescriptorWithoutNip94WhenNoMediaOrOriginalHash(): void
+    {
+        self::assertNull($this->plainDescriptor()->getNip94());
+    }
+
+    public function testBuildsNip94DimensionsFromMediaMetadata(): void
+    {
+        self::assertSame('800x600', $this->mediaNip94()?->getDimensions());
+    }
+
+    public function testBuildsNip94BlurhashFromMediaMetadata(): void
+    {
+        self::assertSame('LEHV6nWB', $this->mediaNip94()?->getBlurhash());
     }
 
     public function testBuildsNip94WithOriginalHashOnTheOptimisePath(): void
@@ -59,10 +58,25 @@ final class BlobDescriptorFactoryTest extends TestCase
             $originalHash,
         );
 
-        $nip94 = $this->factory()->create($storable)->getNip94();
+        self::assertSame($originalHash->toHex(), $this->factory()->create($storable)->getNip94()?->getOriginalHash());
+    }
 
-        self::assertNotNull($nip94);
-        self::assertSame($originalHash->toHex(), $nip94->getOriginalHash());
+    private function plainDescriptor(): BlobDescriptor
+    {
+        return $this->factory()->create(new StorableBlob(
+            new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'plain')), 2048),
+            '/tmp/plain',
+            BlossomFixtures::mimeType('image/png'),
+        ));
+    }
+
+    private function mediaNip94(): ?FileMetadata
+    {
+        return $this->factory()->create(new StorableBlob(
+            new IncomingBlob(BlossomFixtures::blobHash(hash('sha256', 'pixels')), 4096, new MediaMetadata('800x600', 'LEHV6nWB')),
+            '/tmp/pixels',
+            BlossomFixtures::mimeType('image/webp'),
+        ))->getNip94();
     }
 
     private function factory(): BlobDescriptorFactory

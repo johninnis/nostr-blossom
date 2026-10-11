@@ -66,26 +66,30 @@ final class ListBlobsTest extends TestCase
             uploaded: Timestamp::fromInt(1_000_000),
         );
 
+        $listing = new BlobDescriptorCollection([$descriptor]);
         $index = $this->createStub(BlobIndexInterface::class);
-        $index->method('list')->willReturn(new BlobDescriptorCollection([$descriptor]));
+        $index->method('list')->willReturn($listing);
 
         $listBlobs = new ListBlobsUseCase($index, $this->gate);
         $result = $listBlobs->execute($this->authHeader(), $this->ownerKeyPair->getPublicKey(), new ListQuery());
 
-        self::assertInstanceOf(BlobDescriptorCollection::class, $result);
-        self::assertCount(1, $result);
-        self::assertSame($descriptor, $result->toArray()[0]);
+        self::assertSame($listing, $result);
     }
 
     public function testRejectsListingAnotherTenantsBlobs(): void
     {
-        $index = $this->createMock(BlobIndexInterface::class);
-        $index->expects(self::never())->method('list');
-
-        $listBlobs = new ListBlobsUseCase($index, $this->gate);
+        $listBlobs = new ListBlobsUseCase($this->createStub(BlobIndexInterface::class), $this->gate);
         $result = $listBlobs->execute($this->authHeader(), BlossomFixtures::publicKey(str_repeat('cd', 32)), new ListQuery());
 
         self::assertInstanceOf(AuthorisationFailure::class, $result);
+    }
+
+    public function testDoesNotQueryTheIndexForAnotherTenantsBlobs(): void
+    {
+        $index = $this->createMock(BlobIndexInterface::class);
+        $index->expects(self::never())->method('list');
+
+        new ListBlobsUseCase($index, $this->gate)->execute($this->authHeader(), BlossomFixtures::publicKey(str_repeat('cd', 32)), new ListQuery());
     }
 
     public function testInvalidSignatureGetsTheSameRefusalWhetherTheKeyIsTrustedOrUnknown(): void
@@ -121,13 +125,18 @@ final class ListBlobsTest extends TestCase
 
     public function testRejectsMissingAuth(): void
     {
-        $index = $this->createMock(BlobIndexInterface::class);
-        $index->expects(self::never())->method('list');
-
-        $listBlobs = new ListBlobsUseCase($index, $this->gate);
+        $listBlobs = new ListBlobsUseCase($this->createStub(BlobIndexInterface::class), $this->gate);
         $result = $listBlobs->execute('', $this->ownerKeyPair->getPublicKey(), new ListQuery());
 
         self::assertInstanceOf(AuthenticationFailure::class, $result);
+    }
+
+    public function testDoesNotQueryTheIndexWhenAuthIsMissing(): void
+    {
+        $index = $this->createMock(BlobIndexInterface::class);
+        $index->expects(self::never())->method('list');
+
+        new ListBlobsUseCase($index, $this->gate)->execute('', $this->ownerKeyPair->getPublicKey(), new ListQuery());
     }
 
     private function authHeader(): string

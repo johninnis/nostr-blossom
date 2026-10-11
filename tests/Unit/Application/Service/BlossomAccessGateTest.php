@@ -40,30 +40,42 @@ final class BlossomAccessGateTest extends TestCase
 
     public function testUploadVerifiesTheSignatureBeforeAskingThePolicy(): void
     {
-        $result = $this->gate()->authoriseUpload(self::HEADER);
+        $this->gate()->authoriseUpload(self::HEADER);
 
-        self::assertSame($this->token, $result);
         self::assertSame(['parse:upload', 'verify', 'allowUpload'], $this->calls);
+    }
+
+    public function testUploadAdmitsTheVerifiedToken(): void
+    {
+        self::assertSame($this->token, $this->gate()->authoriseUpload(self::HEADER));
     }
 
     public function testUploadNeverAsksThePolicyAboutAnInvalidSignature(): void
     {
+        $this->gate(['verify' => AuthenticationFailure::invalidSignature()])->authoriseUpload(self::HEADER);
+
+        self::assertSame(['parse:upload', 'verify'], $this->calls);
+    }
+
+    public function testUploadReturnsTheInvalidSignatureRefusal(): void
+    {
         $invalid = AuthenticationFailure::invalidSignature();
 
-        $result = $this->gate(['verify' => $invalid])->authoriseUpload(self::HEADER);
-
-        self::assertSame($invalid, $result);
-        self::assertSame(['parse:upload', 'verify'], $this->calls);
+        self::assertSame($invalid, $this->gate(['verify' => $invalid])->authoriseUpload(self::HEADER));
     }
 
     public function testUploadStopsAtAnUnparsableHeaderBeforeVerifying(): void
     {
+        $this->gate(['parse' => AuthenticationFailure::malformedHeader()])->authoriseUpload(self::HEADER);
+
+        self::assertSame(['parse:upload'], $this->calls);
+    }
+
+    public function testUploadReturnsTheUnparsableHeaderRefusal(): void
+    {
         $malformed = AuthenticationFailure::malformedHeader();
 
-        $result = $this->gate(['parse' => $malformed])->authoriseUpload(self::HEADER);
-
-        self::assertSame($malformed, $result);
-        self::assertSame(['parse:upload'], $this->calls);
+        self::assertSame($malformed, $this->gate(['parse' => $malformed])->authoriseUpload(self::HEADER));
     }
 
     public function testUploadReturnsThePolicyRefusal(): void
@@ -75,28 +87,40 @@ final class BlossomAccessGateTest extends TestCase
 
     public function testMediaVerifiesTheSignatureBeforeAskingTheMediaPolicy(): void
     {
-        $result = $this->gate()->authoriseMedia(self::HEADER);
+        $this->gate()->authoriseMedia(self::HEADER);
 
-        self::assertSame($this->token, $result);
         self::assertSame(['parse:media', 'verify', 'allowMedia'], $this->calls);
+    }
+
+    public function testMediaAdmitsTheVerifiedToken(): void
+    {
+        self::assertSame($this->token, $this->gate()->authoriseMedia(self::HEADER));
     }
 
     public function testUploadCheckBindsTheDeclaredBlobBeforeVerifying(): void
     {
-        $result = $this->gate()->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): null => null);
+        $this->gate()->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): null => null);
 
-        self::assertNull($result);
         self::assertSame(['parse:upload', 'requireAuthorisedBlob', 'verify', 'allowUpload'], $this->calls);
+    }
+
+    public function testUploadCheckPassesAnAuthorisedDeclaredBlob(): void
+    {
+        self::assertNull($this->gate()->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): null => null));
     }
 
     public function testUploadCheckRefusesADeclaredValueBeforeTheBindingOrSignature(): void
     {
+        $this->gate()->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): BlossomFailure => BlobTooLargeFailure::beyondMaximum(1024));
+
+        self::assertSame(['parse:upload'], $this->calls);
+    }
+
+    public function testUploadCheckReturnsTheDeclaredValueRefusal(): void
+    {
         $tooLarge = BlobTooLargeFailure::beyondMaximum(1024);
 
-        $result = $this->gate()->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): BlossomFailure => $tooLarge);
-
-        self::assertSame($tooLarge, $result);
-        self::assertSame(['parse:upload'], $this->calls);
+        self::assertSame($tooLarge, $this->gate()->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): BlossomFailure => $tooLarge));
     }
 
     public function testUploadCheckReportsAnUnparsableHeaderAheadOfADeclaredRefusal(): void
@@ -123,46 +147,66 @@ final class BlossomAccessGateTest extends TestCase
 
     public function testUploadCheckRefusesAnUnboundBlobBeforeVerifying(): void
     {
+        $this->gate(['requireAuthorisedBlob' => AuthorisationFailure::blobNotAuthorised()])->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): null => null);
+
+        self::assertSame(['parse:upload', 'requireAuthorisedBlob'], $this->calls);
+    }
+
+    public function testUploadCheckReturnsTheUnboundBlobRefusal(): void
+    {
         $unbound = AuthorisationFailure::blobNotAuthorised();
 
-        $result = $this->gate(['requireAuthorisedBlob' => $unbound])->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): null => null);
-
-        self::assertSame($unbound, $result);
-        self::assertSame(['parse:upload', 'requireAuthorisedBlob'], $this->calls);
+        self::assertSame($unbound, $this->gate(['requireAuthorisedBlob' => $unbound])->authoriseUploadCheck(self::HEADER, $this->hash, static fn (): null => null));
     }
 
     public function testMediaCheckBindsTheDeclaredBlobBeforeVerifyingAndAsksTheMediaPolicy(): void
     {
-        $result = $this->gate()->authoriseMediaCheck(self::HEADER, $this->hash, static fn (): null => null);
+        $this->gate()->authoriseMediaCheck(self::HEADER, $this->hash, static fn (): null => null);
 
-        self::assertNull($result);
         self::assertSame(['parse:media', 'requireAuthorisedBlob', 'verify', 'allowMedia'], $this->calls);
+    }
+
+    public function testMediaCheckPassesAnAuthorisedDeclaredBlob(): void
+    {
+        self::assertNull($this->gate()->authoriseMediaCheck(self::HEADER, $this->hash, static fn (): null => null));
     }
 
     public function testDeleteBindsTheBlobBeforeVerifyingAndVerifiesBeforeThePolicy(): void
     {
-        $result = $this->gate()->authoriseDelete(self::HEADER, $this->hash);
+        $this->gate()->authoriseDelete(self::HEADER, $this->hash);
 
-        self::assertSame($this->token, $result);
         self::assertSame(['parse:delete', 'requireAuthorisedBlob', 'verify', 'allowDelete'], $this->calls);
+    }
+
+    public function testDeleteAdmitsTheVerifiedToken(): void
+    {
+        self::assertSame($this->token, $this->gate()->authoriseDelete(self::HEADER, $this->hash));
     }
 
     public function testDeleteRefusesAnUnboundBlobWithoutVerifying(): void
     {
+        $this->gate(['requireAuthorisedBlob' => AuthorisationFailure::blobNotAuthorised()])->authoriseDelete(self::HEADER, $this->hash);
+
+        self::assertSame(['parse:delete', 'requireAuthorisedBlob'], $this->calls);
+    }
+
+    public function testDeleteReturnsTheUnboundBlobRefusal(): void
+    {
         $unbound = AuthorisationFailure::blobNotAuthorised();
 
-        $result = $this->gate(['requireAuthorisedBlob' => $unbound])->authoriseDelete(self::HEADER, $this->hash);
-
-        self::assertSame($unbound, $result);
-        self::assertSame(['parse:delete', 'requireAuthorisedBlob'], $this->calls);
+        self::assertSame($unbound, $this->gate(['requireAuthorisedBlob' => $unbound])->authoriseDelete(self::HEADER, $this->hash));
     }
 
     public function testListVerifiesBeforeAskingThePolicyAboutTheTarget(): void
     {
-        $result = $this->gate()->authoriseList(self::HEADER, BlossomFixtures::publicKey(str_repeat('d', 64)));
+        $this->gate()->authoriseList(self::HEADER, BlossomFixtures::publicKey(str_repeat('d', 64)));
 
-        self::assertNull($result);
         self::assertSame(['parse:list', 'verify', 'allowList:'.str_repeat('d', 64)], $this->calls);
+    }
+
+    public function testListPassesATargetThePolicyAllows(): void
+    {
+        self::assertNull($this->gate()->authoriseList(self::HEADER, BlossomFixtures::publicKey(str_repeat('d', 64))));
     }
 
     public function testListReturnsThePolicyRefusal(): void
@@ -174,58 +218,82 @@ final class BlossomAccessGateTest extends TestCase
 
     public function testPublicGetNeverParsesAPresentHeader(): void
     {
-        $result = $this->gate()->authoriseGet(self::HEADER, $this->hash);
+        $this->gate()->authoriseGet(self::HEADER, $this->hash);
 
-        self::assertNull($result);
         self::assertSame(['allowGet:anonymous'], $this->calls);
+    }
+
+    public function testPublicGetPassesWhateverHeaderIsPresent(): void
+    {
+        self::assertNull($this->gate()->authoriseGet(self::HEADER, $this->hash));
     }
 
     public function testGatedGetWithoutAHeaderReturnsTheAnonymousRefusal(): void
     {
         $anonymousRefusal = AuthenticationFailure::missingHeader();
 
-        $result = $this->gate(['anonymousGet' => $anonymousRefusal])->authoriseGet('', $this->hash);
+        self::assertSame($anonymousRefusal, $this->gate(['anonymousGet' => $anonymousRefusal])->authoriseGet('', $this->hash));
+    }
 
-        self::assertSame($anonymousRefusal, $result);
+    public function testGatedGetWithoutAHeaderAsksOnlyTheAnonymousPolicy(): void
+    {
+        $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader()])->authoriseGet('', $this->hash);
+
         self::assertSame(['allowGet:anonymous'], $this->calls);
     }
 
     public function testGatedGetScopesThenVerifiesThenAsksThePolicyAboutTheActor(): void
     {
-        $result = $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader()])->authoriseGet(self::HEADER, $this->hash);
+        $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader()])->authoriseGet(self::HEADER, $this->hash);
 
-        self::assertNull($result);
         self::assertSame(['allowGet:anonymous', 'parse:get', 'requireBlobInScope', 'verify', 'allowGet:actor'], $this->calls);
+    }
+
+    public function testGatedGetPassesAVerifiedActorThePolicyAllows(): void
+    {
+        self::assertNull($this->gate(['anonymousGet' => AuthenticationFailure::missingHeader()])->authoriseGet(self::HEADER, $this->hash));
     }
 
     public function testGatedGetRefusesAnOutOfScopeTokenBeforeVerifying(): void
     {
+        $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader(), 'requireBlobInScope' => AuthorisationFailure::blobNotAuthorised()])->authoriseGet(self::HEADER, $this->hash);
+
+        self::assertSame(['allowGet:anonymous', 'parse:get', 'requireBlobInScope'], $this->calls);
+    }
+
+    public function testGatedGetReturnsTheOutOfScopeRefusal(): void
+    {
         $outOfScope = AuthorisationFailure::blobNotAuthorised();
 
-        $result = $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader(), 'requireBlobInScope' => $outOfScope])->authoriseGet(self::HEADER, $this->hash);
-
-        self::assertSame($outOfScope, $result);
-        self::assertSame(['allowGet:anonymous', 'parse:get', 'requireBlobInScope'], $this->calls);
+        self::assertSame($outOfScope, $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader(), 'requireBlobInScope' => $outOfScope])->authoriseGet(self::HEADER, $this->hash));
     }
 
     public function testGatedGetNeverAsksThePolicyAboutAnInvalidSignature(): void
     {
+        $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader(), 'verify' => AuthenticationFailure::invalidSignature()])->authoriseGet(self::HEADER, $this->hash);
+
+        self::assertSame(['allowGet:anonymous', 'parse:get', 'requireBlobInScope', 'verify'], $this->calls);
+    }
+
+    public function testGatedGetReturnsTheInvalidSignatureRefusal(): void
+    {
         $invalid = AuthenticationFailure::invalidSignature();
 
-        $result = $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader(), 'verify' => $invalid])->authoriseGet(self::HEADER, $this->hash);
-
-        self::assertSame($invalid, $result);
-        self::assertSame(['allowGet:anonymous', 'parse:get', 'requireBlobInScope', 'verify'], $this->calls);
+        self::assertSame($invalid, $this->gate(['anonymousGet' => AuthenticationFailure::missingHeader(), 'verify' => $invalid])->authoriseGet(self::HEADER, $this->hash));
     }
 
     public function testReceivedBlobIsBoundWithoutReparsingVerifyingOrAskingThePolicy(): void
     {
+        $this->gate(['requireAuthorisedBlob' => AuthorisationFailure::blobNotAuthorised()])->authoriseReceivedBlob($this->token, $this->hash);
+
+        self::assertSame(['requireAuthorisedBlob'], $this->calls);
+    }
+
+    public function testReceivedBlobReturnsTheUnboundBlobRefusal(): void
+    {
         $unbound = AuthorisationFailure::blobNotAuthorised();
 
-        $result = $this->gate(['requireAuthorisedBlob' => $unbound])->authoriseReceivedBlob($this->token, $this->hash);
-
-        self::assertSame($unbound, $result);
-        self::assertSame(['requireAuthorisedBlob'], $this->calls);
+        self::assertSame($unbound, $this->gate(['requireAuthorisedBlob' => $unbound])->authoriseReceivedBlob($this->token, $this->hash));
     }
 
     /**

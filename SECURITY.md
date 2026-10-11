@@ -49,6 +49,8 @@ The size and detected MIME type the inspector returns are taken at face value. (
 
 The package has no HTTP layer, so the browser-facing CORS contract is structurally the host's to emit. Blossom's browser clients depend on it: the host must answer `OPTIONS` on every endpoint with `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Headers: Authorization, *`, and `Access-Control-Allow-Methods` naming that path's verbs (optionally `Access-Control-Max-Age: 86400`). A missing or wrong pre-flight is not merely non-conformant — it is what lets a browser reach the authenticated endpoints at all, so getting `Access-Control-Allow-Headers` wrong silently breaks `Authorization`-bearing requests. On an error the host maps the returned `BlossomFailure` to the response: `category()->httpStatus()` for the status (see [ADR-0007](docs/adr/0007-the-http-status-code-lives-on-the-domain-failure-category.md)) and `getMessage()` for the human-readable `X-Reason` header. The failure hierarchy carries that message precisely so the host does not have to invent one; a host that drops it leaves clients with a bare status and no cause.
 
+The HTTP server in front of the package must also accept an `Authorization` header line of 8 KiB. A Blossom token grows with the blobs it names, and `BlossomAuthValidator` reads one of up to 8000 characters (nostr-core's `MAX_BLOSSOM_HEADER_LENGTH`), so a server that refuses longer header lines refuses batch tokens before the package sees them (shared nostr-adrs ADR-0106).
+
 ## Accepted trade-offs (deliberate, and why they are acceptable)
 
 ### A well-formed request from a refused key pays one signature verification

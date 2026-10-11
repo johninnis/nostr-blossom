@@ -32,14 +32,16 @@ final class ReportBlobTest extends TestCase
 
     public function testPersistsReportForEachBlobHash(): void
     {
-        $first = hash('sha256', 'first');
-        $second = hash('sha256', 'second');
-
         $reports = $this->createMock(BlobReportStoreInterface::class);
         $reports->expects(self::exactly(2))->method('save');
 
-        $report = new ReportBlobUseCase($reports, $this->signatureService);
-        $result = $report->execute($this->reportEvent($first, $second));
+        new ReportBlobUseCase($reports, $this->signatureService)->execute($this->reportEvent(hash('sha256', 'first'), hash('sha256', 'second')));
+    }
+
+    public function testAcceptsReportNamingSeveralBlobs(): void
+    {
+        $report = new ReportBlobUseCase($this->createStub(BlobReportStoreInterface::class), $this->signatureService);
+        $result = $report->execute($this->reportEvent(hash('sha256', 'first'), hash('sha256', 'second')));
 
         self::assertNull($result);
     }
@@ -51,7 +53,14 @@ final class ReportBlobTest extends TestCase
         $reports = $this->createMock(BlobReportStoreInterface::class);
         $reports->expects(self::once())->method('save');
 
-        $report = new ReportBlobUseCase($reports, $this->signatureService);
+        new ReportBlobUseCase($reports, $this->signatureService)->execute($this->reportEvent($hash, $hash, $hash));
+    }
+
+    public function testAcceptsReportRepeatingOneBlob(): void
+    {
+        $hash = hash('sha256', 'blob');
+
+        $report = new ReportBlobUseCase($this->createStub(BlobReportStoreInterface::class), $this->signatureService);
         $result = $report->execute($this->reportEvent($hash, $hash, $hash));
 
         self::assertNull($result);
@@ -90,13 +99,18 @@ final class ReportBlobTest extends TestCase
 
     public function testRejectsReportWithoutBlobReference(): void
     {
-        $reports = $this->createMock(BlobReportStoreInterface::class);
-        $reports->expects(self::never())->method('save');
-
-        $report = new ReportBlobUseCase($reports, $this->signatureService);
+        $report = new ReportBlobUseCase($this->createStub(BlobReportStoreInterface::class), $this->signatureService);
         $result = $report->execute($this->reportEvent());
 
         self::assertInstanceOf(BlobReportFailure::class, $result);
+    }
+
+    public function testPersistsNothingForReportWithoutBlobReference(): void
+    {
+        $reports = $this->createMock(BlobReportStoreInterface::class);
+        $reports->expects(self::never())->method('save');
+
+        new ReportBlobUseCase($reports, $this->signatureService)->execute($this->reportEvent());
     }
 
     private function reportEvent(string ...$hashes): string
