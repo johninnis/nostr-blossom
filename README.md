@@ -244,6 +244,9 @@ composer check-style
 # Apply / check automated refactorings
 composer rector
 composer check-rector
+
+# Check that no tracked path component exceeds 95 characters
+composer check-path-lengths
 ```
 
 ## License
